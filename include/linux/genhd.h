@@ -189,7 +189,6 @@ struct gendisk {
  */
 	char disk_name[DISK_NAME_LEN];	/* name of major driver */  /*磁盘名*/
 
-
 	unsigned short events;		/* supported events */
 	unsigned short event_flags;	/* flags related to event processing */
 
@@ -403,6 +402,7 @@ extern void blk_unregister_region(dev_t devt, unsigned long range);
 									\
 	__disk;								\
 })
+
 /*****************************************************************************
  * 函 数 名  : alloc_disk
  * 负 责 人  : hy

@@ -920,6 +920,7 @@ static void __device_add_disk(struct device *parent, struct gendisk *disk,
 		ret = bdi_register(bdi, "%u:%u", MAJOR(devt), MINOR(devt));
 		WARN_ON(ret);
 		bdi_set_owner(bdi, dev);
+
 /** comment by hy 2018-10-18
  * # 块设备映射域进行注册, 
      块设备映射域中将设备编号（一个或多个） 和通用磁盘描述符关联起来，
@@ -1168,10 +1169,10 @@ struct block_device *bdget_disk(struct gendisk *disk, int partno)
  * # 获得gendisk的编号为partno的分区描述符
  */
 	part = disk_get_part(disk, partno);
-	if (part)
 /** comment by hy 2018-10-18
  * # bdget 调用part_devt函数获得分区设备号,返回块设备的block_device描述符
  */
+	if (part)
 		bdev = bdget(part_devt(part));
 	disk_put_part(part);
 

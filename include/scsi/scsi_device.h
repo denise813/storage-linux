@@ -507,6 +507,7 @@ extern int __scsi_execute(struct scsi_device *sdev, const unsigned char *cmd,
 		       sense, sshdr, timeout, retries, flags, rq_flags,	\
 		       resid);						\
 })
+
 /*****************************************************************************
  * 函 数 名  : scsi_execute_req
  * 负 责 人  : hy

@@ -2123,7 +2123,6 @@ page_ok:
 /** comment by hy 2018-10-12
  * # 页面存在， 且状态为最新， 可以将页面中的数据复制到用户空间
  */
-
 		isize = i_size_read(inode);
 		end_index = (isize - 1) >> PAGE_SHIFT;
 		if (unlikely(!isize || index > end_index)) {

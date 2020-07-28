@@ -270,10 +270,10 @@ void wb_wakeup_delayed(struct bdi_writeback *wb)
 
 	timeout = msecs_to_jiffies(dirty_writeback_interval * 10);
 	spin_lock_bh(&wb->work_lock);
-	if (test_bit(WB_registered, &wb->state))
 /** comment by hy 2018-12-21
  * # 每隔5秒回写数据,保持数据脏状态最大时长为30s
  */
+	if (test_bit(WB_registered, &wb->state))
 		queue_delayed_work(bdi_wq, &wb->dwork, timeout);
 	spin_unlock_bh(&wb->work_lock);
 }

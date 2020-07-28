@@ -2295,21 +2295,25 @@ static __latent_entropy struct task_struct *copy_process(
 		p->exit_signal = -1;
 		p->group_leader = current->group_leader;
 		p->tgid = current->tgid;
-	} else {//创建进程
-		if (clone_flags & CLONE_PARENT)
+	} else {
+/** comment by hy 2020-07-28
+ * # 创建进程
+ */
 /** comment by hy 2018-11-26
  * # 新进程和当前进程时兄弟关系
-        新进程exit_signal等于当前进程所属线程组的组长的成员exit_signal
+	新进程exit_signal等于当前进程所属线程组的组长的成员exit_signal
  */
-			p->exit_signal = current->group_leader->exit_signal;
-		else
 /** comment by hy 2018-11-26
  * # 新进程和当前进程时父子关系
-        新进程的成员exit_signal时调用指定的信号
+	新进程的成员exit_signal时调用指定的信号
  */
 /** comment by hy 2018-11-26
- * # 新进程所属的组长是自己
+ * # 新进程和当前进程时父子关系
+	新进程的成员exit_signal时调用指定的信号
  */
+		if (clone_flags & CLONE_PARENT)
+			p->exit_signal = current->group_leader->exit_signal;
+		else
 			p->exit_signal = args->exit_signal;
 		p->group_leader = p;
 		p->tgid = p->pid;

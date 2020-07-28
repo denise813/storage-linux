@@ -674,7 +674,6 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
  *  * # 读取文件的当前编译
  *      获得当前读/写位置， 即记录在 fite 插述符中的 f_po 域的值
  */
-
 		loff_t pos, *ppos = file_ppos(f.file);
 		if (ppos) {
 			pos = *ppos;

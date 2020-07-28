@@ -1841,6 +1841,7 @@ int scsi_scan_host_selected(struct Scsi_Host *shost, unsigned int channel,
 
 /** comment by hy 2018-10-14
  * # 主机适配器处于运行状态
+     channel 扫描指定通路
  */
 	if (scsi_host_scan_allowed(shost) && scsi_autopm_get_host(shost) == 0) {
 		if (channel == SCAN_WILD_CARD)
@@ -1849,9 +1850,6 @@ int scsi_scan_host_selected(struct Scsi_Host *shost, unsigned int channel,
 				scsi_scan_channel(shost, channel, id, lun,
 						  rescan);
 		else
-/** comment by hy 2018-10-14
- * # 扫描指定通路
- */
 			scsi_scan_channel(shost, channel, id, lun, rescan);
 		scsi_autopm_put_host(shost);
 	}
