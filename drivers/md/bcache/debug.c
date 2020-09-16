@@ -49,11 +49,17 @@ void bch_btree_verify(struct btree *b)
 	v->level = b->level;
 	v->keys.ops = b->keys.ops;
 
+/** comment by hy 2020-09-16
+ * # 分配一个对cache设备的bio
+ */
 	bio = bch_bbio_alloc(b->c);
 	bio_set_dev(bio, PTR_CACHE(b->c, &b->key, 0)->bdev);
 	bio->bi_iter.bi_sector	= PTR_OFFSET(&b->key, 0);
 	bio->bi_iter.bi_size	= KEY_SIZE(&v->key) << 9;
 	bio->bi_opf		= REQ_OP_READ | REQ_META;
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 	bch_bio_map(bio, sorted);
 
 	submit_bio_wait(bio);
@@ -119,6 +125,9 @@ void bch_data_verify(struct cached_dev *dc, struct bio *bio)
 	check->bi_iter.bi_sector = bio->bi_iter.bi_sector;
 	check->bi_iter.bi_size = bio->bi_iter.bi_size;
 
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 	bch_bio_map(check, NULL);
 	if (bch_bio_alloc_pages(check, GFP_NOIO))
 		goto out_put;

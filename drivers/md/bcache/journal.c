@@ -61,6 +61,9 @@ reread:		left = ca->sb.bucket_size - offset;
 		bio->bi_end_io	= journal_read_endio;
 		bio->bi_private = &cl;
 		bio_set_op_attrs(bio, REQ_OP_READ, 0);
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 		bch_bio_map(bio, data);
 
 		closure_bio_submit(ca->set, bio, &cl);
@@ -806,6 +809,9 @@ static void journal_write_unlocked(struct closure *cl)
 		bio->bi_private = w;
 		bio_set_op_attrs(bio, REQ_OP_WRITE,
 				 REQ_SYNC|REQ_META|REQ_PREFLUSH|REQ_FUA);
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 		bch_bio_map(bio, w->data);
 
 		trace_bcache_journal_write(bio, w->data->keys);
@@ -849,6 +855,9 @@ static void journal_try_write(struct cache_set *c)
 
 	if (!c->journal.io_in_flight) {
 		c->journal.io_in_flight = 1;
+/** comment by hy 2020-09-16
+ * # journal的写入流程
+ */
 		closure_call(cl, journal_write_unlocked, NULL, &c->cl);
 	} else {
 		spin_unlock(&c->journal.lock);
@@ -898,6 +907,9 @@ static struct journal_write *journal_wait_for_write(struct cache_set *c,
 			if (wait)
 				trace_bcache_journal_full(c);
 
+/** comment by hy 2020-09-16
+ * # 当journal已满时需要抛弃较旧的journal
+ */
 			journal_reclaim(c);
 			spin_unlock(&c->journal.lock);
 
@@ -942,8 +954,18 @@ atomic_t *bch_journal(struct cache_set *c,
 	if (!CACHE_SYNC(&c->sb))
 		return NULL;
 
+/** comment by hy 2020-09-16
+ * # journal当前缓冲区能放下keylist中的key
+     直接返回，否则启动分为两种
+     cur journal未满则journal_try_write
+     尝试写一部分journal
+     当journal已满时需要抛弃较旧的journal
+ */
 	w = journal_wait_for_write(c, bch_keylist_nkeys(keys));
 
+/** comment by hy 2020-09-16
+ * # 将keys存入journal缓存
+ */
 	memcpy(bset_bkey_last(w->data), keys->keys, bch_keylist_bytes(keys));
 	w->data->keys += bch_keylist_nkeys(keys);
 
@@ -951,9 +973,15 @@ atomic_t *bch_journal(struct cache_set *c,
 	atomic_inc(ret);
 
 	if (parent) {
+/** comment by hy 2020-09-16
+ * # 尝试持久化journal
+ */
 		closure_wait(&w->wait, parent);
 		journal_try_write(c);
 	} else if (!w->dirty) {
+/** comment by hy 2020-09-16
+ * # 延迟写
+ */
 		w->dirty = true;
 		schedule_delayed_work(&c->journal.work,
 				      msecs_to_jiffies(c->journal_delay_ms));
@@ -973,6 +1001,11 @@ void bch_journal_meta(struct cache_set *c, struct closure *cl)
 
 	bch_keylist_init(&keys);
 
+/** comment by hy 2020-09-16
+ * # 负责将keys写到journal中
+     按照插入时间排序，只用记录叶子节点上bkey的更新
+     非叶子节点在分裂的时候就已经持久化了
+ */
 	ref = bch_journal(c, &keys, cl);
 	if (ref)
 		atomic_dec_bug(ref);
@@ -998,6 +1031,9 @@ int bch_journal_alloc(struct cache_set *c)
 	j->w[0].c = c;
 	j->w[1].c = c;
 
+/** comment by hy 2020-09-16
+ * # 建立journal的双缓冲区
+ */
 	if (!(init_fifo(&j->pin, JOURNAL_PIN, GFP_KERNEL)) ||
 	    !(j->w[0].data = (void *) __get_free_pages(GFP_KERNEL, JSET_BITS)) ||
 	    !(j->w[1].data = (void *) __get_free_pages(GFP_KERNEL, JSET_BITS)))

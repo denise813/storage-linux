@@ -77,6 +77,10 @@ uint8_t bch_inc_gen(struct cache *ca, struct bucket *b)
 {
 	uint8_t ret = ++b->gen;
 
+/** comment by hy 2020-09-16
+ * # 能invalidate的条件是为被gc mark,或gc设为可回收
+     且未被invalidate,且代数未到最大
+ */
 	ca->set->need_gc = max(ca->set->need_gc, bucket_gc_gen(b));
 	WARN_ON_ONCE(ca->set->need_gc > BUCKET_GC_GEN_MAX);
 
@@ -146,6 +150,9 @@ void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
 	if (GC_SECTORS_USED(b))
 		trace_bcache_invalidate(ca, b - ca->buckets);
 
+/** comment by hy 2020-09-16
+ * # 更新次
+ */
 	bch_inc_gen(ca, b);
 	b->prio = INITIAL_PRIO;
 	atomic_inc(&b->pin);
@@ -190,6 +197,10 @@ static void invalidate_buckets_lru(struct cache *ca)
 
 		if (!heap_full(&ca->heap))
 			heap_add(&ca->heap, b, bucket_max_cmp);
+/** comment by hy 2020-09-16
+ * # 加bucket加入到heap中 
+     按prio从小到大排序heap
+ */
 		else if (bucket_max_cmp(b, heap_peek(&ca->heap))) {
 			ca->heap.data[0] = b;
 			heap_sift(&ca->heap, 0, bucket_max_cmp);
@@ -199,7 +210,14 @@ static void invalidate_buckets_lru(struct cache *ca)
 	for (i = ca->heap.used / 2 - 1; i >= 0; --i)
 		heap_sift(&ca->heap, i, bucket_min_cmp);
 
+/** comment by hy 2020-09-16
+ * # 按prio从小到大排序heap, 从堆中取出bucket 直到ca->free_inc满
+     
+ */
 	while (!fifo_full(&ca->free_inc)) {
+/** comment by hy 2020-09-16
+ * # free_inc未满，则wake_up_gc
+ */
 		if (!heap_pop(&ca->heap, b, bucket_min_cmp)) {
 			/*
 			 * We don't want to be calling invalidate_buckets()
@@ -224,11 +242,17 @@ static void invalidate_buckets_fifo(struct cache *ca)
 		    ca->fifo_last_bucket >= ca->sb.nbuckets)
 			ca->fifo_last_bucket = ca->sb.first_bucket;
 
+/** comment by hy 2020-09-16
+ * # 最先分配的bucket
+ */
 		b = ca->buckets + ca->fifo_last_bucket++;
 
 		if (bch_can_invalidate_bucket(ca, b))
 			bch_invalidate_one_bucket(ca, b);
 
+/** comment by hy 2020-09-16
+ * # 若由于很多bucket不能回收, 这时需要唤醒gc
+ */
 		if (++checked >= ca->sb.nbuckets) {
 			ca->invalidate_needs_gc = 1;
 			wake_up_gc(ca->set);
@@ -330,6 +354,9 @@ static int bch_allocator_thread(void *arg)
 		while (1) {
 			long bucket;
 
+/** comment by hy 2020-09-16
+ * # 如果后备free_inc 不为空,pop一个后备bucket
+ */
 			if (!fifo_pop(&ca->free_inc, bucket))
 				break;
 
@@ -341,6 +368,9 @@ static int bch_allocator_thread(void *arg)
 				mutex_lock(&ca->set->bucket_lock);
 			}
 
+/** comment by hy 2020-09-16
+ * # 等待后备的加入ca->free中，这样保证分配函数有可用的bucket
+ */
 			allocator_wait(ca, bch_allocator_push(ca, bucket));
 			wake_up(&ca->set->btree_cache_wait);
 			wake_up(&ca->set->bucket_wait);
@@ -353,8 +383,14 @@ static int bch_allocator_thread(void *arg)
 		 */
 
 retry_invalidate:
+/** comment by hy 2020-09-16
+ * # 如果free_inc已经空了，则需要invalidate当前正在使用的bucket
+ */
 		allocator_wait(ca, ca->set->gc_mark_valid &&
 			       !ca->invalidate_needs_gc);
+/** comment by hy 2020-09-16
+ * # 三种invalidate正在使用的bucket的方式，fifo, lru和randorm
+ */
 		invalidate_buckets(ca);
 
 		/*
@@ -402,6 +438,9 @@ long bch_bucket_alloc(struct cache *ca, unsigned int reserve, bool wait)
 		return -1;
 
 	/* fastpath */
+/** comment by hy 2020-09-16
+ * # 先查看当前是否有空闲的bucket
+ */
 	if (fifo_pop(&ca->free[RESERVE_NONE], r) ||
 	    fifo_pop(&ca->free[reserve], r))
 		goto out;
@@ -447,10 +486,22 @@ out:
 
 	BUG_ON(atomic_read(&b->pin) != 1);
 
+/** comment by hy 2020-09-16
+ * # 更新要分配bucket的信息
+ */
 	SET_GC_SECTORS_USED(b, ca->sb.bucket_size);
 
+/** comment by hy 2020-09-16
+ * # 该bucket分配给元数据使用
+ */
 	if (reserve <= RESERVE_PRIO) {
+/** comment by hy 2020-09-16
+ * #  元数据的bucket不能随意回收
+ */
 		SET_GC_MARK(b, GC_MARK_METADATA);
+/** comment by hy 2020-09-16
+ * # 该bucket目前不需要gc 处理
+ */
 		SET_GC_MOVE(b, 0);
 		b->prio = BTREE_PRIO;
 	} else {
@@ -631,6 +682,9 @@ bool bch_alloc_sectors(struct cache_set *c,
 	bkey_init(&alloc.key);
 	spin_lock(&c->data_bucket_lock);
 
+/** comment by hy 2020-09-16
+ * # 从bucket中分配空间
+ */
 	while (!(b = pick_data_bucket(c, k, write_point, &alloc.key))) {
 		unsigned int watermark = write_prio
 			? RESERVE_MOVINGGC

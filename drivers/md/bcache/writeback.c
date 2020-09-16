@@ -261,6 +261,9 @@ static void dirty_init(struct keybuf_key *w)
 
 	bio->bi_iter.bi_size	= KEY_SIZE(&w->key) << 9;
 	bio->bi_private		= w;
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 	bch_bio_map(bio, NULL);
 }
 
@@ -493,6 +496,9 @@ static void read_dirty(struct cached_dev *dc)
 			closure_call(&io->cl, read_dirty_submit, NULL, &cl);
 		}
 
+/** comment by hy 2020-09-16
+ * # 为了让writeback写不要太密集
+ */
 		delay = writeback_delay(dc, size);
 
 		while (!kthread_should_stop() &&
@@ -727,6 +733,9 @@ static int bch_writeback_thread(void *arg)
 
 		up_write(&dc->writeback_lock);
 
+/** comment by hy 2020-09-16
+ * # 遍历writeback_keys
+ */
 		read_dirty(dc);
 
 		if (searched_full_index) {

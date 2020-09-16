@@ -62,6 +62,10 @@ static void bch_data_insert_keys(struct closure *cl)
 	struct bkey *replace_key = op->replace ? &op->replace_key : NULL;
 	int ret;
 
+/** comment by hy 2020-09-16
+ * # 负责将keys写到journal中
+     按照插入时间排序，只用记录叶子节点上bkey的更新
+ */
 	if (!op->replace)
 		journal_ref = bch_journal(op->c, &op->insert_keys,
 					  op->flush_journal ? cl : NULL);
@@ -181,6 +185,9 @@ static void bch_data_insert_endio(struct bio *bio)
 			set_closure_fn(cl, NULL, NULL);
 	}
 
+/** comment by hy 2020-09-16
+ * # 对cache设备的io的回调
+ */
 	bch_bbio_endio(op->c, bio, bio->bi_status, "writing data to cache");
 }
 
@@ -219,6 +226,9 @@ static void bch_data_insert_start(struct closure *cl)
 		SET_KEY_INODE(k, op->inode);
 		SET_KEY_OFFSET(k, bio->bi_iter.bi_sector);
 
+/** comment by hy 2020-09-16
+ * # 需要在cache disk中分配新的存储区域
+ */
 		if (!bch_alloc_sectors(op->c, k, bio_sectors(bio),
 				       op->write_point, op->write_prio,
 				       op->writeback))
@@ -245,6 +255,9 @@ static void bch_data_insert_start(struct closure *cl)
 		bch_keylist_push(&op->insert_keys);
 
 		bio_set_op_attrs(n, REQ_OP_WRITE, 0);
+/** comment by hy 2020-09-16
+ * # 提交对cache设备的io
+ */
 		bch_submit_bbio(n, op->c, k, 0);
 	} while (n != bio);
 
@@ -314,6 +327,11 @@ void bch_data_insert(struct closure *cl)
 
 	bch_keylist_init(&op->insert_keys);
 	bio_get(op->bio);
+/** comment by hy 2020-09-16
+ * # 考虑cache disk存储区域的overlap
+     old key -> inset key
+     3-7 -> 2-7
+ */
 	bch_data_insert_start(cl);
 }
 
@@ -368,11 +386,17 @@ static bool check_should_bypass(struct cached_dev *dc, struct bio *bio)
 	struct task_struct *task = current;
 	struct io *i;
 
+/** comment by hy 2020-09-16
+ * # bio为discard 或gc 数量大于 CUTOFF_CACHE_ADD 则bypass为true
+ */
 	if (test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) ||
 	    c->gc_stats.in_use > CUTOFF_CACHE_ADD ||
 	    (bio_op(bio) == REQ_OP_DISCARD))
 		goto skip;
 
+/** comment by hy 2020-09-16
+ * # 主设备设备禁用cache
+ */
 	if (mode == CACHE_MODE_NONE ||
 	    (mode == CACHE_MODE_WRITEAROUND &&
 	     op_is_write(bio_op(bio))))
@@ -394,6 +418,9 @@ static bool check_should_bypass(struct cached_dev *dc, struct bio *bio)
 			goto skip;
 	}
 
+/** comment by hy 2020-09-16
+ * # 传输的sector 为按block对齐
+ */
 	if (bio->bi_iter.bi_sector & (c->sb.block_size - 1) ||
 	    bio_sectors(bio) & (c->sb.block_size - 1)) {
 		pr_debug("skipping unaligned io\n");
@@ -439,12 +466,19 @@ found:
 	sectors = max(task->sequential_io,
 		      task->sequential_io_avg) >> 9;
 
+/** comment by hy 2020-09-16
+ * # 根据历史判断是否为sequence io
+     dc->sequential_cutoff(default为4MB)
+ */
 	if (dc->sequential_cutoff &&
 	    sectors >= dc->sequential_cutoff >> 9) {
 		trace_bcache_bypass_sequential(bio);
 		goto skip;
 	}
 
+/** comment by hy 2020-09-16
+ * # 拥塞状态
+ */
 	if (congested && sectors >= congested) {
 		trace_bcache_bypass_congested(bio);
 		goto skip;
@@ -502,6 +536,9 @@ static void bch_cache_read_endio(struct bio *bio)
 		s->iop.status = BLK_STS_IOERR;
 	}
 
+/** comment by hy 2020-09-16
+ * # 对cache设备的io的回调
+ */
 	bch_bbio_endio(s->iop.c, bio, bio->bi_status, "reading from cache");
 }
 
@@ -516,9 +553,16 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	struct bkey *bio_key;
 	unsigned int ptr;
 
+/** comment by hy 2020-09-16
+ * # 搜索的key比当前key小，则返回MAP_CONTINUE让上层搜索下一个key
+ */
 	if (bkey_cmp(k, &KEY(s->iop.inode, bio->bi_iter.bi_sector, 0)) <= 0)
 		return MAP_CONTINUE;
 
+/** comment by hy 2020-09-16
+ * # key不在b+tree或key中的数据只有部分在b+tree则调用 cache_miss
+     cache_miss = cached_dev_cache_miss
+ */
 	if (KEY_INODE(k) != s->iop.inode ||
 	    KEY_START(k) > bio->bi_iter.bi_sector) {
 		unsigned int bio_sectors = bio_sectors(bio);
@@ -538,6 +582,9 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	if (!KEY_SIZE(k))
 		return MAP_CONTINUE;
 
+/** comment by hy 2020-09-16
+ * # 数据已在缓存中且key中的数据范围也完全在缓存中
+ */
 	/* XXX: figure out best pointer - for multiple cache devices */
 	ptr = 0;
 
@@ -569,7 +616,9 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	 * and reread from the backing device (but we don't pass that
 	 * error up anywhere).
 	 */
-
+/** comment by hy 2020-09-16
+ * # 直接从缓存disk读取
+ */
 	__bch_submit_bbio(n, b->c);
 	return n == bio ? MAP_DONE : MAP_CONTINUE;
 }
@@ -583,6 +632,9 @@ static void cache_lookup(struct closure *cl)
 
 	bch_btree_op_init(&s->op, -1);
 
+/** comment by hy 2020-09-16
+ * # 遍历b+tree叶子节点，来查找bkey
+ */
 	ret = bch_btree_map_keys(&s->op, s->iop.c,
 				 &KEY(s->iop.inode, bio->bi_iter.bi_sector, 0),
 				 cache_lookup_fn, MAP_END_KEY);
@@ -825,14 +877,23 @@ static void cached_dev_read_done(struct closure *cl)
 	 * to the buffers the original bio pointed to:
 	 */
 
+/** comment by hy 2020-09-16
+ * # 当s->iop.bio不为0时， 表明有新的数据要添加到管理缓存的b+tree中
+ */
 	if (s->iop.bio) {
 		bio_reset(s->iop.bio);
 		s->iop.bio->bi_iter.bi_sector =
 			s->cache_miss->bi_iter.bi_sector;
 		bio_copy_dev(s->iop.bio, s->cache_miss);
 		s->iop.bio->bi_iter.bi_size = s->insert_bio_sectors << 9;
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 		bch_bio_map(s->iop.bio, NULL);
 
+/** comment by hy 2020-09-16
+ * # 将数据拷贝到cache_missbio中
+ */
 		bio_copy_data(s->cache_miss, s->iop.bio);
 
 		bio_put(s->cache_miss);
@@ -848,6 +909,9 @@ static void cached_dev_read_done(struct closure *cl)
 	if (s->iop.bio &&
 	    !test_bit(CACHE_SET_STOPPING, &s->iop.c->flags)) {
 		BUG_ON(!s->iop.replace);
+/** comment by hy 2020-09-16
+ * # bch_data_insert 将数据更新到cache设备中
+ */
 		closure_call(&s->iop.cl, bch_data_insert, NULL, cl);
 	}
 
@@ -863,6 +927,10 @@ static void cached_dev_read_done_bh(struct closure *cl)
 				  !s->cache_missed, s->iop.bypass);
 	trace_bcache_read(s->orig_bio, !s->cache_missed, s->iop.bypass);
 
+/** comment by hy 2020-09-16
+ * # cached_dev_read_done 数据更新到cache设备中
+     cached_dev_bio_complete 释放struct search
+ */
 	if (s->iop.status)
 		continue_at_nobarrier(cl, cached_dev_read_error, bcache_wq);
 	else if (s->iop.bio || verify(dc))
@@ -874,6 +942,9 @@ static void cached_dev_read_done_bh(struct closure *cl)
 static int cached_dev_cache_miss(struct btree *b, struct search *s,
 				 struct bio *bio, unsigned int sectors)
 {
+/** comment by hy 2020-09-16
+ * # https://blog.csdn.net/wanthelping/article/details/50448985?utm_medium=distribute.pc_relevant.none-task-blog-BlogCommendFromMachineLearnPai2-1.channel_param&depth_1-utm_source=distribute.pc_relevant.none-task-blog-BlogCommendFromMachineLearnPai2-1.channel_param
+ */
 	int ret = MAP_CONTINUE;
 	unsigned int reada = 0;
 	struct cached_dev *dc = container_of(s->d, struct cached_dev, disk);
@@ -895,10 +966,17 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 
 	s->insert_bio_sectors = min(sectors, bio_sectors(bio) + reada);
 
+/** comment by hy 2020-09-16
+ * # 计算要向b+tree添加或替换的key
+ */
 	s->iop.replace_key = KEY(s->iop.inode,
 				 bio->bi_iter.bi_sector + s->insert_bio_sectors,
 				 s->insert_bio_sectors);
 
+/** comment by hy 2020-09-16
+ * # 向b+tree提交key
+     最重要的代码是bch_btree_insert_node
+ */
 	ret = bch_btree_insert_check_key(b, &s->op, &s->iop.replace_key);
 	if (ret)
 		return ret;
@@ -923,14 +1001,24 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 	cache_bio->bi_end_io	= backing_request_endio;
 	cache_bio->bi_private	= &s->cl;
 
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 	bch_bio_map(cache_bio, NULL);
 	if (bch_bio_alloc_pages(cache_bio, __GFP_NOWARN|GFP_NOIO))
 		goto out_put;
 
+/** comment by hy 2020-09-16
+ * # 读取非元数据且预读机制未禁止时，计算能预读的sector数
+ */
 	if (reada)
 		bch_mark_cache_readahead(s->iop.c, s->d);
 
 	s->cache_miss	= miss;
+/** comment by hy 2020-09-16
+ * # 从主设备读取数据，并将bio记录到iop.bio中
+     以便上层cached_dev_read_done_bh 将数据加到缓存设备
+ */
 	s->iop.bio	= cache_bio;
 	bio_get(cache_bio);
 	/* I/O request sent to backing device */
@@ -951,7 +1039,14 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 {
 	struct closure *cl = &s->cl;
 
+/** comment by hy 2020-09-16
+ * # cache_lookup 遍历b+tree叶子节点，来查找bkey
+     ->bch_btree_map_keys-> cache_lookup_fn
+ */
 	closure_call(&s->iop.cl, cache_lookup, NULL, cl);
+/** comment by hy 2020-09-16
+ * # 
+ */
 	continue_at(cl, cached_dev_read_done_bh, NULL);
 }
 
@@ -973,6 +1068,9 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	struct bkey start = KEY(dc->disk.id, bio->bi_iter.bi_sector, 0);
 	struct bkey end = KEY(dc->disk.id, bio_end_sector(bio), 0);
 
+/** comment by hy 2020-09-16
+ * # 查看是否和已有要writeback的区域有重合，若有，取消当前区域的bypass
+ */
 	bch_keybuf_check_overlapping(&s->iop.c->moving_gc_keys, &start, &end);
 
 	down_read_non_owner(&dc->writeback_lock);
@@ -992,6 +1090,9 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	 * But check_overlapping drops dirty keys for which io hasn't started,
 	 * so we still want to call it.
 	 */
+/** comment by hy 2020-09-16
+ * # bio为REQ_DISCARD，则采用bypass
+ */
 	if (bio_op(bio) == REQ_OP_DISCARD)
 		s->iop.bypass = true;
 
@@ -1012,9 +1113,15 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 
 		/* I/O request sent to backing device */
 		bio->bi_end_io = backing_request_endio;
+/** comment by hy 2020-09-16
+ * # 数据写回主设备
+ */
 		closure_bio_submit(s->iop.c, bio, cl);
 
 	} else if (s->iop.writeback) {
+/** comment by hy 2020-09-16
+ * # 开启writeback 不需要将数据立即写回主设备
+ */
 		bch_writeback_add(dc);
 		s->iop.bio = bio;
 
@@ -1042,10 +1149,16 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 		s->iop.bio = bio_clone_fast(bio, GFP_NOIO, &dc->disk.bio_split);
 		/* I/O request sent to backing device */
 		bio->bi_end_io = backing_request_endio;
+/** comment by hy 2020-09-16
+ * # 数据写回主设备
+ */
 		closure_bio_submit(s->iop.c, bio, cl);
 	}
 
 insert_data:
+/** comment by hy 2020-09-16
+ * # B+tree更新节点
+ */
 	closure_call(&s->iop.cl, bch_data_insert, NULL, cl);
 	continue_at(cl, cached_dev_write_complete, NULL);
 }
@@ -1191,6 +1304,9 @@ blk_qc_t cached_dev_make_request(struct request_queue *q, struct bio *bio)
 	bio->bi_iter.bi_sector += dc->sb.data_offset;
 
 	if (cached_dev_get(dc)) {
+/** comment by hy 2020-09-16
+ * # 有cache device 根据要传输的bio, 用search_alloc建立struct search s
+ */
 		s = search_alloc(bio, d);
 		trace_bcache_request_start(s->d, bio);
 
@@ -1203,8 +1319,14 @@ blk_qc_t cached_dev_make_request(struct request_queue *q, struct bio *bio)
 					      cached_dev_nodata,
 					      bcache_wq);
 		} else {
+/** comment by hy 2020-09-16
+ * # 是否应该bypass这个bio
+ */
 			s->iop.bypass = check_should_bypass(dc, bio);
 
+/** comment by hy 2020-09-16
+ * # 读写分别调用cached_dev_read或cached_dev_write
+ */
 			if (rw)
 				cached_dev_write(dc, s);
 			else
@@ -1212,6 +1334,9 @@ blk_qc_t cached_dev_make_request(struct request_queue *q, struct bio *bio)
 		}
 	} else
 		/* I/O request sent to backing device */
+/** comment by hy 2020-09-16
+ * # 如果device没有对应的缓存设备，则直接将向主设备提交bio
+ */
 		detached_dev_do_request(d, bio);
 
 	return BLK_QC_T_NONE;

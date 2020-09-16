@@ -416,6 +416,9 @@ STORE(__cached_dev)
 
 		v = -ENOENT;
 		list_for_each_entry(c, &bch_cache_sets, list) {
+/** comment by hy 2020-09-16
+ * # 
+ */
 			v = bch_cached_dev_attach(dc, c, set_uuid);
 			if (!v)
 				return size;

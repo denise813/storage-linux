@@ -154,6 +154,21 @@ struct bkey_float;
 
 #define MAX_BSETS		4U
 
+/** comment by hy 2020-09-16
+ * # bcache中以b+tree来维护索引
+     一个btree node里包含4个bset
+     每个bset中是排序的bkey
+     每个btree node以一个bkey来标识
+     该bkey是其子节点中所有bkey中的最大值
+     不同于标准的b+树那(父节点存放子节点的地址指针);
+     bcache中的b+树中非叶子节点中存放的bke
+     y用于查找其子节点（并不是存的地址指针），
+     而是根据bkey计算hash，
+     再到hash表中取查找btree node（ mca_find 函数实现）。
+     叶子节点中的bkey存放的就是实际的映射了
+     （根据这些key可以找到缓存数据以及在hdd上的位置）
+     intbch_btree_map_keys 遍历函数
+ */
 struct bset_tree {
 	/*
 	 * We construct a binary tree in an array as if the array
@@ -228,6 +243,9 @@ struct btree_keys {
 	 * to the memory we have allocated for this btree node. Additionally,
 	 * set[0]->data points to the entire btree node as it exists on disk.
 	 */
+/** comment by hy 2020-09-16
+ * # 一个btree node只有4个bset
+ */
 	struct bset_tree	set[MAX_BSETS];
 };
 
@@ -413,6 +431,10 @@ static inline void bkey_init(struct bkey *k)
 static __always_inline int64_t bkey_cmp(const struct bkey *l,
 					const struct bkey *r)
 {
+/** comment by hy 2020-09-16
+ * # KEY_INODE:表示一个后端设备的id编号
+     KEY_OFFSET：bkey所缓存的hdd上的那段数据区域的结束地址
+ */
 	return unlikely(KEY_INODE(l) != KEY_INODE(r))
 		? (int64_t) KEY_INODE(l) - (int64_t) KEY_INODE(r)
 		: (int64_t) KEY_OFFSET(l) - (int64_t) KEY_OFFSET(r);

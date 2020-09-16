@@ -140,6 +140,9 @@ enum closure_state {
 #define CLOSURE_REMAINING_MASK		(CLOSURE_BITS_START - 1)
 #define CLOSURE_REMAINING_INITIALIZER	(1|CLOSURE_RUNNING)
 
+/** comment by hy 2020-09-16
+ * # 一个引用计数来管理回调或对象析构的机制
+ */
 struct closure {
 	union {
 		struct {

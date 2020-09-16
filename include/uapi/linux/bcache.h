@@ -19,7 +19,19 @@ static inline void SET_##name(type *k, __u64 v)			\
 }
 
 /* Btree keys - all units are in sectors */
-
+/** comment by hy 2020-09-16
+ * # bkey就是记录缓存设备缓存数据和后端设备数据的映射关系的
+ */
+/** comment by hy 2020-09-16
+ * # KEY_INODE:表示一个后端设备的id编号
+     KEY_SIZE：表示该bkey所对应缓存数据的大小
+     KEY_DIRTY：表示该块缓存数据是否是脏数据
+     KEY_PTRS：表示cache设备的个数
+     KEY_OFFSET：bkey所缓存的hdd上的那段数据区域的结束地址
+     PTR_OFFSET：在缓存设备中缓存的数据的起始地址
+     PTR_DEV：cache设备
+     PTR_GEN：对应cache的bucket的迭代数
+ */
 struct bkey {
 	__u64	high;
 	__u64	low;
@@ -399,6 +411,12 @@ BITMASK(UUID_FLASH_ONLY,	struct uuid_entry, flags, 0, 1);
  *
  * On disk a btree node is a list/log of these; within each set the keys are
  * sorted
+ */
+/** comment by hy 2020-09-16
+ * # bset是一个bkey的数组，
+     在内存中的bset是一段连续的内存，
+     并且以bkey排序的，
+     内存中一个btree node只有4个bset
  */
 struct bset {
 	__u64			csum;

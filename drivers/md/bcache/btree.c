@@ -247,15 +247,23 @@ static void bch_btree_node_read(struct btree *b)
 	trace_bcache_btree_read(b);
 
 	closure_init_stack(&cl);
-
+/** comment by hy 2020-09-16
+ * # 分配一个对cache设备的bio
+ */
 	bio = bch_bbio_alloc(b->c);
 	bio->bi_iter.bi_size = KEY_SIZE(&b->key) << 9;
 	bio->bi_end_io	= btree_node_read_endio;
 	bio->bi_private	= &cl;
 	bio->bi_opf = REQ_OP_READ | REQ_META;
 
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 	bch_bio_map(bio, b->keys.set[0].data);
 
+/** comment by hy 2020-09-16
+ * # 提交对cache设备的io
+ */
 	bch_submit_bbio(bio, b->c, &b->key, 0);
 	closure_sync(&cl);
 
@@ -343,12 +351,18 @@ static void do_btree_node_write(struct btree *b)
 	i->csum		= btree_csum_set(b, i);
 
 	BUG_ON(b->bio);
+/** comment by hy 2020-09-16
+ * # 分配一个对cache设备的bio
+ */
 	b->bio = bch_bbio_alloc(b->c);
 
 	b->bio->bi_end_io	= btree_node_write_endio;
 	b->bio->bi_private	= cl;
 	b->bio->bi_iter.bi_size	= roundup(set_bytes(i), block_bytes(b->c));
 	b->bio->bi_opf		= REQ_OP_WRITE | REQ_META | REQ_FUA;
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 	bch_bio_map(b->bio, i);
 
 	/*
@@ -380,6 +394,9 @@ static void do_btree_node_write(struct btree *b)
 			addr += PAGE_SIZE;
 		}
 
+/** comment by hy 2020-09-16
+ * # 提交对cache设备的io
+ */
 		bch_submit_bbio(b->bio, b->c, &k.key, 0);
 
 		continue_at(cl, btree_node_write_done, NULL);
@@ -389,8 +406,14 @@ static void do_btree_node_write(struct btree *b)
 		 * just allocated
 		 */
 		b->bio->bi_vcnt = 0;
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 		bch_bio_map(b->bio, i);
 
+/** comment by hy 2020-09-16
+ * # 提交对cache设备的io
+ */
 		bch_submit_bbio(b->bio, b->c, &k.key, 0);
 
 		closure_sync(cl);
@@ -480,6 +503,9 @@ static void bch_btree_leaf_dirty(struct btree *b, atomic_t *journal_ref)
 	BUG_ON(!b->written);
 	BUG_ON(!i->keys);
 
+/** comment by hy 2020-09-16
+ * # 若node未dirty 则延迟调用b->work
+ */
 	if (!btree_node_dirty(b))
 		schedule_delayed_work(&b->work, 30 * HZ);
 
@@ -490,6 +516,10 @@ static void bch_btree_leaf_dirty(struct btree *b, atomic_t *journal_ref)
 	 * in the leaf node, to make sure the oldest jset seq won't
 	 * be increased before this btree node is flushed.
 	 */
+/** comment by hy 2020-09-16
+ * # bset的大小已经很大
+     bch_journal,来记录更新的日志来保证更改不会丢失了
+ */
 	if (journal_ref) {
 		if (w->journal &&
 		    journal_pin_cmp(b->c, w->journal, journal_ref)) {
@@ -820,6 +850,9 @@ static struct btree *mca_find(struct cache_set *c, struct bkey *k)
 	struct btree *b;
 
 	rcu_read_lock();
+/** comment by hy 2020-09-16
+ * # 根据key的hash从hlist中取出下一个btree节点
+ */
 	hlist_for_each_entry_rcu(b, mca_hash(c, k), hash)
 		if (PTR_HASH(c, &b->key) == PTR_HASH(c, k))
 			goto out;
@@ -973,12 +1006,18 @@ struct btree *bch_btree_node_get(struct cache_set *c, struct btree_op *op,
 
 	BUG_ON(level < 0);
 retry:
+/** comment by hy 2020-09-16
+ * # 查找
+ */
 	b = mca_find(c, k);
 
 	if (!b) {
 		if (current->bio_list)
 			return ERR_PTR(-EAGAIN);
 
+/** comment by hy 2020-09-16
+ * # 若key 对应的btree不存在，则先申请分配一个bucket
+ */
 		mutex_lock(&c->bucket_lock);
 		b = mca_alloc(c, op, k, level);
 		mutex_unlock(&c->bucket_lock);
@@ -1125,6 +1164,11 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 static struct btree *btree_node_alloc_replacement(struct btree *b,
 						  struct btree_op *op)
 {
+/** comment by hy 2020-09-16
+ * # Bcache将cache disk的空间线性划分为若干个bucket
+     每个bucket对应的磁盘地址按bucket号线性增加
+     bch_btree_node_alloc 调用 bch_bucket_alloc
+ */
 	struct btree *n = bch_btree_node_alloc(b->c, op, b->level, b->parent);
 
 	if (!IS_ERR_OR_NULL(n)) {
@@ -1214,6 +1258,10 @@ static uint8_t __bch_btree_mark_key(struct cache_set *c, int level,
 			     c, "inconsistent ptrs: mark = %llu, level = %i",
 			     GC_MARK(g), level);
 
+/** comment by hy 2020-09-16
+ * # level 非叶节点为元数据
+     KEY_DIRTY bch_data_insert_start中会设置dirty位
+ */
 		if (level)
 			SET_GC_MARK(g, GC_MARK_METADATA);
 		else if (KEY_DIRTY(k))
@@ -1222,6 +1270,10 @@ static uint8_t __bch_btree_mark_key(struct cache_set *c, int level,
 			SET_GC_MARK(g, GC_MARK_RECLAIMABLE);
 
 		/* guard against overflow */
+/** comment by hy 2020-09-16
+ * # 占用的sector包含两个部分:
+     bucket 所用的sector和key所占用的空间
+ */
 		SET_GC_SECTORS_USED(g, min_t(unsigned int,
 					     GC_SECTORS_USED(g) + KEY_SIZE(k),
 					     MAX_GC_SECTORS_USED));
@@ -1270,6 +1322,9 @@ static bool btree_gc_mark_node(struct btree *b, struct gc_stat *gc)
 	gc->nodes++;
 
 	for_each_key_filter(&b->keys, k, &iter, bch_ptr_invalid) {
+/** comment by hy 2020-09-16
+ * # 
+ */
 		stale = max(stale, btree_mark_key(b, k));
 		keys++;
 
@@ -1585,6 +1640,9 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 
 			r->keys = btree_gc_count_keys(r->b);
 
+/** comment by hy 2020-09-16
+ * # 通过合并btree node的方式来减少bucket的使用量
+ */
 			ret = btree_gc_coalesce(b, op, gc, r);
 			if (ret)
 				break;
@@ -1655,6 +1713,9 @@ static int bch_btree_gc_root(struct btree *b, struct btree_op *op,
 	int ret = 0;
 	bool should_rewrite;
 
+/** comment by hy 2020-09-16
+ * # 
+ */
 	should_rewrite = btree_gc_mark_node(b, gc);
 	if (should_rewrite) {
 		n = btree_node_alloc_replacement(b, NULL);
@@ -1673,6 +1734,10 @@ static int bch_btree_gc_root(struct btree *b, struct btree_op *op,
 	__bch_btree_mark_key(b->c, b->level + 1, &b->key);
 
 	if (b->level) {
+/** comment by hy 2020-09-16
+ * # 遍历b+tree的每个node, 对每个node执行btree_gc_coalesce
+     通过合并btree node的方式来减少bucket的使用量
+ */
 		ret = btree_gc_recurse(b, op, writes, gc);
 		if (ret)
 			return ret;
@@ -1790,10 +1855,16 @@ static void bch_btree_gc(struct cache_set *c)
 	closure_init_stack(&writes);
 	bch_btree_op_init(&op, SHRT_MAX);
 
+/** comment by hy 2020-09-16
+ * # 标记表明gc开始工作
+ */
 	btree_gc_start(c);
 
 	/* if CACHE_SET_IO_DISABLE set, gc thread should stop too */
 	do {
+/** comment by hy 2020-09-16
+ * # 遍历btree,分析哪些bucket可被gc回收
+ */
 		ret = bcache_btree_root(gc_root, c, &op, &writes, &stats);
 		closure_sync(&writes);
 		cond_resched();
@@ -1805,7 +1876,13 @@ static void bch_btree_gc(struct cache_set *c)
 			pr_warn("gc failed!\n");
 	} while (ret && !test_bit(CACHE_SET_IO_DISABLE, &c->flags));
 
+/** comment by hy 2020-09-16
+ * # 标记不能gc的bucket为meta, 并统计能gc的bucket数目
+ */
 	bch_btree_gc_finish(c);
+/** comment by hy 2020-09-16
+ * # 分配器thread
+ */
 	wake_up_allocators(c);
 
 	bch_time_stats_update(&c->btree_gc_time, start_time);
@@ -1817,6 +1894,14 @@ static void bch_btree_gc(struct cache_set *c)
 
 	trace_bcache_gc_end(c);
 
+/** comment by hy 2020-09-16
+ * # 完成实际gc工作
+     遍历cache disk的bucket
+       如果为元数据或数据占用量== bucket_size则 continue
+     统计哪些bucket可以通过移动来合并bucket的使用
+       标记这些bucket为SET_GC_MOVE(b, 1)
+     callread_moving = read_moving
+ */
 	bch_moving_gc(c);
 }
 
@@ -1850,6 +1935,9 @@ static int bch_gc_thread(void *arg)
 			break;
 
 		set_gc_sectors(c);
+/** comment by hy 2020-09-16
+ * # 主要流程
+ */
 		bch_btree_gc(c);
 	}
 
@@ -2158,21 +2246,40 @@ static bool bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 			break;
 
 		if (bkey_cmp(k, &b->key) <= 0) {
+/** comment by hy 2020-09-16
+ * # 要插入key < btree->key, 则直接调用btree_insert_key插入
+ */
 			if (!b->level)
 				bkey_put(b->c, k);
 
+/** comment by hy 2020-09-16
+ * # 首先遍历检察btree中的bset是否已排序
+     若为排好序排序就调用bch_bkey_try_merge
+     调用bch_bset_insert(b, m, k)执行b+tree添加或replace操作
+ */
 			ret |= btree_insert_key(b, k, replace_key);
 			bch_keylist_pop_front(insert_keys);
 		} else if (bkey_cmp(&START_KEY(k), &b->key) < 0) {
+/** comment by hy 2020-09-16
+ * # 和btree已有key部分重合,计算不重合部分插入
+ */
 			BKEY_PADDED(key) temp;
 			bkey_copy(&temp.key, insert_keys->keys);
 
 			bch_cut_back(&b->key, &temp.key);
 			bch_cut_front(&b->key, insert_keys->keys);
 
+/** comment by hy 2020-09-16
+ * # 首先遍历检察btree中的bset是否已排序
+     若为排好序排序就调用bch_bkey_try_merge
+     调用bch_bset_insert(b, m, k)执行b+tree添加或replace操作
+ */
 			ret |= btree_insert_key(b, &temp.key, replace_key);
 			break;
 		} else {
+/** comment by hy 2020-09-16
+ * # 完全包含与btree->key则不插入
+ */
 			break;
 		}
 	}
@@ -2206,10 +2313,16 @@ static int btree_split(struct btree *b, struct btree_op *op,
 			WARN(1, "insufficient reserve for split\n");
 	}
 
+/** comment by hy 2020-09-16
+ * # 从bucket分配btree node
+ */
 	n1 = btree_node_alloc_replacement(b, op);
 	if (IS_ERR(n1))
 		goto err;
 
+/** comment by hy 2020-09-16
+ * # 计算是否需要分裂
+ */
 	split = set_blocks(btree_bset_first(n1),
 			   block_bytes(n1->c)) > (btree_blocks(b) * 4) / 5;
 
@@ -2222,6 +2335,9 @@ static int btree_split(struct btree *b, struct btree_op *op,
 		if (IS_ERR(n2))
 			goto err_free1;
 
+/** comment by hy 2020-09-16
+ * # b已经是根节点，需要分配另一个节点作为新的根节点
+ */
 		if (!b->parent) {
 			n3 = bch_btree_node_alloc(b->c, op, b->level + 1, NULL);
 			if (IS_ERR(n3))
@@ -2231,6 +2347,9 @@ static int btree_split(struct btree *b, struct btree_op *op,
 		mutex_lock(&n1->write_lock);
 		mutex_lock(&n2->write_lock);
 
+/** comment by hy 2020-09-16
+ * # 将要插入的key先插入到新建立的n1中
+ */
 		bch_btree_insert_keys(n1, op, insert_keys, replace_key);
 
 		/*
@@ -2263,6 +2382,9 @@ static int btree_split(struct btree *b, struct btree_op *op,
 		trace_bcache_btree_node_compact(b, btree_bset_first(n1)->keys);
 
 		mutex_lock(&n1->write_lock);
+/** comment by hy 2020-09-16
+ * # 将parent_keys提交的n3中
+ */
 		bch_btree_insert_keys(n1, op, insert_keys, replace_key);
 	}
 
@@ -2339,12 +2461,26 @@ static int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 
 	if (bch_keylist_nkeys(insert_keys) > insert_u64s_remaining(b)) {
 		mutex_unlock(&b->write_lock);
+/** comment by hy 2020-09-16
+ * # btree空间不够，则需要进行拆分操作
+ */
 		goto split;
 	}
 
 	BUG_ON(write_block(b) != btree_bset_last(b));
 
+/** comment by hy 2020-09-16
+ * # bch_btree_insert_keys
+     分三种情况实际更新b+tree
+     要插入key < btree->key, 则直接调用btree_insert_key插入
+     btree已有key部分重合,计算不重合部分插入
+     完全包含与btree->key则不插入
+ */
 	if (bch_btree_insert_keys(b, op, insert_keys, replace_key)) {
+/** comment by hy 2020-09-16
+ * # 对于页节点不立即更新，bch_btree_leaf_dirty 仅标记为dirty
+     对于非页节点，更新完后直接写入
+ */
 		if (!b->level)
 			bch_btree_leaf_dirty(b, journal_ref);
 		else
@@ -2354,6 +2490,9 @@ static int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 	mutex_unlock(&b->write_lock);
 
 	/* wait for btree node write if necessary, after unlock */
+/** comment by hy 2020-09-16
+ * # 等待btree写入完成
+ */
 	closure_sync(&cl);
 
 	return 0;
@@ -2366,6 +2505,9 @@ split:
 		return -EINTR;
 	} else {
 		/* Invalidated all iterators */
+/** comment by hy 2020-09-16
+ * # 分裂处理
+ */
 		int ret = btree_split(b, op, insert_keys, replace_key);
 
 		if (bch_keylist_empty(insert_keys))
@@ -2426,6 +2568,9 @@ static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
 	struct btree_insert_op *op = container_of(b_op,
 					struct btree_insert_op, op);
 
+/** comment by hy 2020-09-16
+ * # 
+ */
 	int ret = bch_btree_insert_node(b, &op->op, op->keys,
 					op->journal_ref, op->replace_key);
 	if (ret && !bch_keylist_empty(op->keys))
@@ -2450,6 +2595,9 @@ int bch_btree_insert(struct cache_set *c, struct keylist *keys,
 
 	while (!ret && !bch_keylist_empty(keys)) {
 		op.op.lock = 0;
+/** comment by hy 2020-09-16
+ * # btree_insert_fn =  B+Tree的Insert Node操作
+ */
 		ret = bch_btree_map_leaf_nodes(&op.op, c,
 					       &START_KEY(keys->keys),
 					       btree_insert_fn);

@@ -114,6 +114,10 @@ struct btree_write {
 	int			prio_blocked;
 };
 
+/** comment by hy 2020-09-11
+ * # 一个bkey的数组,内存中的bset是一段连续的内存,并且以bkey排序的
+     一个btree node只有4个bset
+ */
 struct btree {
 	/* Hottest entries first */
 	struct hlist_node	hash;

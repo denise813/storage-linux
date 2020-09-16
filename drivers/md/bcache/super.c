@@ -357,6 +357,9 @@ static void uuid_io(struct cache_set *c, int op, unsigned long op_flags,
 		bio->bi_end_io	= uuid_endio;
 		bio->bi_private = cl;
 		bio_set_op_attrs(bio, op, REQ_SYNC|REQ_META|op_flags);
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 		bch_bio_map(bio, c->uuids);
 
 		bch_submit_bbio(bio, c, k, i);
@@ -523,6 +526,9 @@ static void prio_io(struct cache *ca, uint64_t bucket, int op,
 	bio->bi_end_io	= prio_endio;
 	bio->bi_private = ca;
 	bio_set_op_attrs(bio, op, REQ_SYNC|REQ_META|op_flags);
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 	bch_bio_map(bio, ca->disk_buckets);
 
 	closure_bio_submit(ca->set, bio, &ca->prio);
@@ -1006,17 +1012,26 @@ int bch_cached_dev_run(struct cached_dev *dc)
 		closure_sync(&cl);
 	}
 
+/** comment by hy 2020-09-16
+ * # 通知 block层 有block设备增加
+ */
 	add_disk(d->disk);
 	bd_link_disk_holder(dc->bdev, dc->disk.disk);
 	/*
 	 * won't show up in the uevent file, use udevadm monitor -e instead
 	 * only class / kset properties are persistent
 	 */
+/** comment by hy 2020-09-16
+ * # 发送uevent
+ */
 	kobject_uevent_env(&disk_to_dev(d->disk)->kobj, KOBJ_CHANGE, env);
 	kfree(env[1]);
 	kfree(env[2]);
 	kfree(buf);
 
+/** comment by hy 2020-09-16
+ * # 建立dev 与bcache链接文件
+ */
 	if (sysfs_create_link(&d->kobj, &disk_to_dev(d->disk)->kobj, "dev") ||
 	    sysfs_create_link(&disk_to_dev(d->disk)->kobj,
 			      &d->kobj, "bcache")) {
@@ -1238,7 +1253,9 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c,
 	}
 
 	bch_sectors_dirty_init(&dc->disk);
-
+/** comment by hy 2020-09-16
+ * # 
+ */
 	ret = bch_cached_dev_run(dc);
 	if (ret && (ret != -EBUSY)) {
 		up_write(&dc->writeback_lock);
@@ -1354,6 +1371,9 @@ static int cached_dev_init(struct cached_dev *dc, unsigned int block_size)
 		dc->partial_stripes_expensive =
 			q->limits.raid_partial_stripes_expensive;
 
+/** comment by hy 2020-09-14
+ * # 后端设备请求
+ */
 	ret = bcache_device_init(&dc->disk, block_size,
 			 dc->bdev->bd_part->nr_sects - dc->sb.data_offset,
 			 cached_dev_make_request, dc->bdev);
@@ -1391,6 +1411,9 @@ static int register_bdev(struct cache_sb *sb, struct cache_sb_disk *sb_disk,
 	dc->bdev->bd_holder = dc;
 	dc->sb_disk = sb_disk;
 
+/** comment by hy 2020-09-14
+ * # 生成后端请求处理
+ */
 	if (cached_dev_init(dc, sb->block_size << 9))
 		goto err;
 
@@ -1480,6 +1503,9 @@ static int flash_dev_run(struct cache_set *c, struct uuid_entry *u)
 	if (kobject_add(&d->kobj, &disk_to_dev(d->disk)->kobj, "bcache"))
 		goto err;
 
+/** comment by hy 2020-09-16
+ * # 建立链接文件
+ */
 	bcache_device_link(d, c, "volume");
 
 	return 0;
@@ -1841,6 +1867,13 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	iter_size = (sb->bucket_size / sb->block_size + 1) *
 		sizeof(struct btree_iter_set);
 
+/** comment by hy 2020-09-16
+ * # 这个大条件 执行好多东西
+     bch_journal_alloc journal 初始化
+     bch_btree_cache_alloc 建立btree node的分配缓存管理结构
+     bch_open_buckets_alloc 初始化c->data_buckets 一共为6个
+     bch_bset_sort_state_init 用于bset中的sort操作
+ */
 	if (!(c->devices = kcalloc(c->nr_uuids, sizeof(void *), GFP_KERNEL)) ||
 	    mempool_init_slab_pool(&c->search, 32, bch_search_cache) ||
 	    mempool_init_kmalloc_pool(&c->bio_meta, 2,
@@ -1891,6 +1924,9 @@ static int run_cache_set(struct cache_set *c)
 		struct jset *j;
 
 		err = "cannot allocate memory for journal";
+/** comment by hy 2020-09-16
+ * # 从cache disk中读出持久化的journal
+ */
 		if (bch_journal_read(c, &journal))
 			goto err;
 
@@ -2024,6 +2060,9 @@ static int run_cache_set(struct cache_set *c)
 	}
 
 	err = "error starting gc thread";
+/** comment by hy 2020-09-16
+ * # 启动gc 流程 对应线程函数 bch_gc_thread
+ */
 	if (bch_gc_thread_start(c))
 		goto err;
 
@@ -2031,9 +2070,17 @@ static int run_cache_set(struct cache_set *c)
 	c->sb.last_mount = (u32)ktime_get_real_seconds();
 	bcache_write_super(c);
 
+/** comment by hy 2020-09-16
+ * # 关联集合里面的设备
+     bch_cached_dev_attach 关联其中一个设备
+     在 对应的 super.c 文件中
+ */
 	list_for_each_entry_safe(dc, t, &uncached_devices, list)
 		bch_cached_dev_attach(dc, c, NULL);
 
+/** comment by hy 2020-09-16
+ * # 运行主设备，并建立link文件
+ */
 	flash_devs_run(c);
 
 	set_bit(CACHE_SET_RUNNING, &c->flags);
@@ -2079,6 +2126,10 @@ static const char *register_cache_set(struct cache *ca)
 			goto found;
 		}
 
+/** comment by hy 2020-09-16
+ * # 从super block中获取bucket size, block_size等参数
+       sb 用于访问cache设备的超级块
+ */
 	c = bch_cache_set_alloc(&ca->sb);
 	if (!c)
 		return err;
@@ -2115,6 +2166,9 @@ found:
 
 	if (c->caches_loaded == c->sb.nr_in_set) {
 		err = "failed to run cache set";
+/** comment by hy 2020-09-16
+ * # cache 与设备进行关联
+ */
 		if (run_cache_set(c) < 0)
 			goto err;
 	}
@@ -2277,6 +2331,9 @@ static int register_cache(struct cache_sb *sb, struct cache_sb_disk *sb_disk,
 	const char *err = NULL; /* must be set for any error case */
 	int ret = 0;
 
+/** comment by hy 2020-09-14
+ * # 看起来是支持分区的
+ */
 	bdevname(bdev, ca->cache_dev_name);
 	memcpy(&ca->sb, sb, sizeof(struct cache_sb));
 	ca->bdev = bdev;
@@ -2313,6 +2370,12 @@ static int register_cache(struct cache_sb *sb, struct cache_sb_disk *sb_disk,
 	}
 
 	mutex_lock(&bch_register_lock);
+/** comment by hy 2020-09-14
+ * # 注册cache设备
+     cache 设备
+     每个设备 通过 bch_cache_allocator_start 函数绑定
+     线程 bch_allocator_thread 用于分配 bucket
+ */
 	err = register_cache_set(ca);
 	mutex_unlock(&bch_register_lock);
 
@@ -2514,6 +2577,9 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 	if (set_blocksize(bdev, 4096))
 		goto out_blkdev_put;
 
+/** comment by hy 2020-09-11
+ * # 加载 subblock
+ */
 	err = read_super(sb, bdev, &sb_disk);
 	if (err)
 		goto out_blkdev_put;
@@ -2546,6 +2612,9 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 			goto out_put_sb_page;
 
 		mutex_lock(&bch_register_lock);
+/** comment by hy 2020-09-14
+ * # 注册后端设备
+ */
 		ret = register_bdev(sb, sb_disk, bdev, dc);
 		mutex_unlock(&bch_register_lock);
 		/* blkdev_put() will be called in cached_dev_free() */
@@ -2558,6 +2627,9 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 			goto out_put_sb_page;
 
 		/* blkdev_put() will be called in bch_cache_release() */
+/** comment by hy 2020-09-14
+ * # 这个地方缓存注册设备
+ */
 		if (register_cache(sb, sb_disk, bdev, ca) != 0)
 			goto out_free_sb;
 	}
@@ -2802,6 +2874,9 @@ static int __init bcache_init(void)
 		return bcache_major;
 	}
 
+/** comment by hy 2020-09-16
+ * # 后端设备io队列
+ */
 	bcache_wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0);
 	if (!bcache_wq)
 		goto err;

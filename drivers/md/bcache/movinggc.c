@@ -25,6 +25,10 @@ static bool moving_pred(struct keybuf *buf, struct bkey *k)
 					   moving_gc_keys);
 	unsigned int i;
 
+/** comment by hy 2020-09-16
+ * # GC_MOVE 若key对应的bucket被标记为move
+     在bch_moving_gc中被设置
+ */
 	for (i = 0; i < KEY_PTRS(k); i++)
 		if (ptr_available(c, k, i) &&
 		    GC_MOVE(PTR_BUCKET(c, k, i)))
@@ -72,6 +76,9 @@ static void read_moving_endio(struct bio *bio)
 		io->op.status = BLK_STS_IOERR;
 	}
 
+/** comment by hy 2020-09-16
+ * # 对cache设备的io的回调
+ */
 	bch_bbio_endio(io->op.c, bio, bio->bi_status, "reading data to move");
 }
 
@@ -86,6 +93,9 @@ static void moving_init(struct moving_io *io)
 
 	bio->bi_iter.bi_size	= KEY_SIZE(&io->w->key) << 9;
 	bio->bi_private		= &io->cl;
+/** comment by hy 2020-09-16
+ * # 对bio中的bio_vec分配物理地址
+ */
 	bch_bio_map(bio, NULL);
 }
 
@@ -135,6 +145,10 @@ static void read_moving(struct cache_set *c)
 	/* XXX: if we error, background writeback could stall indefinitely */
 
 	while (!test_bit(CACHE_SET_STOPPING, &c->flags)) {
+/** comment by hy 2020-09-16
+ * # 填充moving_gc_keys
+     moving_pred 每次从红黑树返回一个struct keybuf_key
+ */
 		w = bch_keybuf_next_rescan(c, &c->moving_gc_keys,
 					   &MAX_KEY, moving_pred);
 		if (!w)
@@ -157,6 +171,9 @@ static void read_moving(struct cache_set *c)
 		io->op.c	= c;
 		io->op.wq	= c->moving_gc_wq;
 
+/** comment by hy 2020-09-16
+ * # 生成&io->bio.bio
+ */
 		moving_init(io);
 		bio = &io->bio.bio;
 
@@ -169,6 +186,9 @@ static void read_moving(struct cache_set *c)
 		trace_bcache_gc_copy(&w->key);
 
 		down(&c->moving_in_flight);
+/** comment by hy 2020-09-16
+ * # 
+ */
 		closure_call(&io->cl, read_moving_submit, NULL, &cl);
 	}
 
@@ -244,6 +264,9 @@ void bch_moving_gc(struct cache_set *c)
 
 	c->moving_gc_keys.last_scanned = ZERO_KEY;
 
+/** comment by hy 2020-09-16
+ * # 
+ */
 	read_moving(c);
 }
 

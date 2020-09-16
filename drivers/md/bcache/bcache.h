@@ -194,9 +194,25 @@
 #include "util.h"
 #include "closure.h"
 
+/** comment by hy 2020-09-16
+ * # 缓存设备会按照bucket大小划分成很多bucket
+     设置成与缓存设备ssd的擦除大小一致，一般建议128k~2M+
+     默认是512k
+     ucket内空间是追加分配的
+     两个优先原则：
+     1）优先考虑io连续性，即使io可能来自于不同的生产者；
+     2）其次考虑相关性，同一个进程产生的数据尽量缓存到相同的bucket里
+ */
 struct bucket {
 	atomic_t	pin;
+/** comment by hy 2020-09-11
+ * # 每次hit都会增加,然后所有的bucket的优先级编号都会周期性地减少
+     不常用的会被回收，这个优先级编号主要是用来实现lru替换的
+ */
 	uint16_t	prio;
+/** comment by hy 2020-09-11
+ * # 用来invalidate bucket用的
+ */
 	uint8_t		gen;
 	uint8_t		last_gc; /* Most out of date gen in the btree */
 	uint16_t	gc_mark; /* Bitfield used by GC. See below for field */
@@ -790,6 +806,9 @@ static inline struct cache *PTR_CACHE(struct cache_set *c,
 	return c->cache[PTR_DEV(k, ptr)];
 }
 
+/** comment by hy 2020-09-16
+ * # 据该信息能够得到bucket
+ */
 static inline size_t PTR_BUCKET_NR(struct cache_set *c,
 				   const struct bkey *k,
 				   unsigned int ptr)
