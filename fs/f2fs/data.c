@@ -558,6 +558,9 @@ static void __submit_merged_bio(struct f2fs_bio_info *io)
 	else
 		trace_f2fs_prepare_write_bio(io->sbi->sb, fio->type, io->bio);
 
+/** comment by hy 2020-09-10
+ * # 从f2fs_io_info得到bio，提交到设备
+ */
 	__submit_bio(io->sbi, io->bio, fio->type);
 	io->bio = NULL;
 }
@@ -603,6 +606,9 @@ static void __f2fs_submit_merged_write(struct f2fs_sb_info *sbi,
 				enum page_type type, enum temp_type temp)
 {
 	enum page_type btype = PAGE_TYPE_OF_BIO(type);
+/** comment by hy 2020-09-10
+ * # temp可以计算属于HOT/WARM/COLD对应的sbi->write_io
+ */
 	struct f2fs_bio_info *io = sbi->write_io[btype] + temp;
 
 	down_write(&io->io_rwsem);
@@ -626,6 +632,9 @@ static void __submit_merged_write_cond(struct f2fs_sb_info *sbi,
 	enum temp_type temp;
 	bool ret = true;
 
+/** comment by hy 2020-09-10
+ * # 遍历不同的HOT/WARM/COLD类型就行回写
+ */
 	for (temp = HOT; temp < NR_TEMP_TYPE; temp++) {
 		if (!force)	{
 			enum page_type btype = PAGE_TYPE_OF_BIO(type);
@@ -658,6 +667,9 @@ void f2fs_submit_merged_write_cond(struct f2fs_sb_info *sbi,
 
 void f2fs_flush_merged_writes(struct f2fs_sb_info *sbi)
 {
+/** comment by hy 2020-09-10
+ * # 分别回写了DATA、NODE、META的信息
+ */
 	f2fs_submit_merged_write(sbi, DATA);
 	f2fs_submit_merged_write(sbi, NODE);
 	f2fs_submit_merged_write(sbi, META);
@@ -903,6 +915,9 @@ void f2fs_submit_page_write(struct f2fs_io_info *fio)
 {
 	struct f2fs_sb_info *sbi = fio->sbi;
 	enum page_type btype = PAGE_TYPE_OF_BIO(fio->type);
+/** comment by hy 2020-09-09
+ * # 这个是F2FS用于临时存放bio的变量
+ */
 	struct f2fs_bio_info *io = sbi->write_io[btype] + fio->temp;
 	struct page *bio_page;
 
@@ -924,6 +939,9 @@ next:
 
 	verify_fio_blkaddr(fio);
 
+/** comment by hy 2020-09-09
+ * # 第一步根据是否有加密，将bio_page设置为对应的page
+ */
 	if (fio->encrypted_page)
 		bio_page = fio->encrypted_page;
 	else if (fio->compressed_page)
@@ -940,6 +958,10 @@ next:
 			io->last_block_in_bio, fio->new_blkaddr))
 		__submit_merged_bio(io);
 alloc_new:
+/** comment by hy 2020-09-09
+ * # 如果bio是null，就创建一个新的bio
+     BIO_MAX_PAGES一般等于256
+ */
 	if (io->bio == NULL) {
 		if (F2FS_IO_ALIGNED(sbi) &&
 				(fio->type == DATA || fio->type == NODE) &&
@@ -952,7 +974,14 @@ alloc_new:
 		io->fio = *fio;
 	}
 
+/** comment by hy 2020-09-09
+ * # 将page加入到bio中，如果  < PAGE_SIZE 表示bio已经满了
+     因此就先将这个bio提交，然后重新分配一个新的bio
+ */
 	if (bio_add_page(io->bio, bio_page, PAGE_SIZE, 0) < PAGE_SIZE) {
+/** comment by hy 2020-09-09
+ * # 提交bio，最终会执行submit_bio函数
+ */
 		__submit_merged_bio(io);
 		goto alloc_new;
 	}
@@ -1050,6 +1079,9 @@ static int f2fs_submit_page_read(struct inode *inode, struct page *page,
 
 static void __set_data_blkaddr(struct dnode_of_data *dn)
 {
+/** comment by hy 2020-09-09
+ * # 根据node page转换到对应的f2fs_node
+ */
 	struct f2fs_node *rn = F2FS_NODE(dn->node_page);
 	__le32 *addr_array;
 	int base = 0;
@@ -1058,7 +1090,13 @@ static void __set_data_blkaddr(struct dnode_of_data *dn)
 		base = get_extra_isize(dn->inode);
 
 	/* Get physical address of data block */
+/** comment by hy 2020-09-09
+ * # 这个用于获得f2fs_inode->i_addr地址或者direct_node->addr地址
+ */
 	addr_array = blkaddr_in_node(rn);
+/** comment by hy 2020-09-09
+ * # 根据偏移赋值更新
+ */
 	addr_array[base + dn->ofs_in_node] = cpu_to_le32(dn->data_blkaddr);
 }
 
@@ -1070,7 +1108,13 @@ static void __set_data_blkaddr(struct dnode_of_data *dn)
  */
 void f2fs_set_data_blkaddr(struct dnode_of_data *dn)
 {
+/** comment by hy 2020-09-09
+ * # 更新node，所以要保证当前的node是最新状态
+ */
 	f2fs_wait_on_page_writeback(dn->node_page, NODE, true, true);
+/** comment by hy 2020-09-09
+ * # 设置dirty，因为更新后的地址要回写到磁盘记录
+ */
 	__set_data_blkaddr(dn);
 	if (set_page_dirty(dn->node_page))
 		dn->node_changed = true;
@@ -1078,8 +1122,17 @@ void f2fs_set_data_blkaddr(struct dnode_of_data *dn)
 
 void f2fs_update_data_blkaddr(struct dnode_of_data *dn, block_t blkaddr)
 {
+/** comment by hy 2020-09-09
+ * # 获得新的物理地址
+ */
 	dn->data_blkaddr = blkaddr;
+/** comment by hy 2020-09-09
+ * # 更新地址到f2fs_inode或者direct_node
+ */
 	f2fs_set_data_blkaddr(dn);
+/** comment by hy 2020-09-09
+ * # 更新cache
+ */
 	f2fs_update_extent_cache(dn);
 }
 
@@ -1104,6 +1157,9 @@ int f2fs_reserve_new_blocks(struct dnode_of_data *dn, blkcnt_t count)
 
 	for (; count > 0; dn->ofs_in_node++) {
 		block_t blkaddr = f2fs_data_blkaddr(dn);
+/** comment by hy 2020-09-09
+ * # 首先判断是不是NULL_ADDR，如果是则初始化为NEW_ADDR
+ */
 		if (blkaddr == NULL_ADDR) {
 			dn->data_blkaddr = NEW_ADDR;
 			__set_data_blkaddr(dn);
@@ -1381,19 +1437,31 @@ alloc:
 
 int f2fs_preallocate_blocks(struct kiocb *iocb, struct iov_iter *from)
 {
+/** comment by hy 2020-09-09
+ * # 获取inode
+ */
 	struct inode *inode = file_inode(iocb->ki_filp);
 	struct f2fs_map_blocks map;
 	int flag;
 	int err = 0;
 	bool direct_io = iocb->ki_flags & IOCB_DIRECT;
 
+/** comment by hy 2020-09-09
+ * # 根据文件指针偏移计算需要从第几个block开始写入
+ */
 	map.m_lblk = F2FS_BLK_ALIGN(iocb->ki_pos);
+/** comment by hy 2020-09-09
+ * # 计算要写入block的个数
+ */
 	map.m_len = F2FS_BYTES_TO_BLK(iocb->ki_pos + iov_iter_count(from));
 	if (map.m_len > map.m_lblk)
 		map.m_len -= map.m_lblk;
 	else
 		map.m_len = 0;
 
+/** comment by hy 2020-09-09
+ * # 初始化一些信息
+ */
 	map.m_next_pgofs = NULL;
 	map.m_next_extent = NULL;
 	map.m_seg_type = NO_CHECK_TYPE;
@@ -1417,6 +1485,11 @@ int f2fs_preallocate_blocks(struct kiocb *iocb, struct iov_iter *from)
 	flag = F2FS_GET_BLOCK_PRE_AIO;
 
 map_blocks:
+/** comment by hy 2020-09-09
+ * # 进行初始化
+     通过逻辑地址(文件偏移指针)找到对应的物理地址(block号)
+     在读写流程中都有作用。在写流程中，该函数的主要作用是初始化地址信息
+ */
 	err = f2fs_map_blocks(inode, &map, 1, flag);
 	if (map.m_len > 0 && err == -ENOSPC) {
 		if (!direct_io)
@@ -1468,7 +1541,13 @@ int f2fs_map_blocks(struct inode *inode, struct f2fs_map_blocks *map,
 	map->m_flags = 0;
 
 	/* it only supports block size == page size */
+/** comment by hy 2020-09-09
+ * # 获得文件访问偏移量
+ */
 	pgofs =	(pgoff_t)map->m_lblk;
+/** comment by hy 2020-09-09
+ * # 获得需要读取的block的长度
+ */
 	end = pgofs + maxblocks;
 
 	if (!create && f2fs_lookup_extent_cache(inode, pgofs, &ei)) {
@@ -1494,7 +1573,14 @@ next_dnode:
 		__do_map_lock(sbi, flag, true);
 
 	/* When reading holes, we need its node page */
+/** comment by hy 2020-09-09
+ * # 初始化dnode，dnode的作用是根据逻辑地址找到物理地址
+ */
 	set_new_dnode(&dn, inode, NULL, NULL, 0);
+/** comment by hy 2020-09-09
+ * # 根据inode找到对应的f2fs_inode或者direct_node结构
+     然后通过pgofs(文件页偏移)获得物理地址，记录在dn中
+ */
 	err = f2fs_get_dnode_of_data(&dn, pgofs, mode);
 	if (err) {
 		if (flag == F2FS_GET_BLOCK_BMAP)
@@ -1517,8 +1603,15 @@ next_dnode:
 	end_offset = ADDRS_PER_PAGE(dn.node_page, inode);
 
 next_block:
+/** comment by hy 2020-09-09
+ * # 根据dn获得物理地址，ofs_in_node表示这个物理地址位于当前node的第几个数据块
+     如 f2fs_inode->i_addr[3]，那么dn.ofs_in_node=3
+ */
 	blkaddr = f2fs_data_blkaddr(&dn);
 
+/** comment by hy 2020-09-09
+ * # s_valid_blkaddr函数用于判断是否存在旧数据
+ */
 	if (__is_valid_data_blkaddr(blkaddr) &&
 		!f2fs_is_valid_blkaddr(sbi, blkaddr, DATA_GENERIC_ENHANCE)) {
 		err = -EFSCORRUPTED;
@@ -1536,6 +1629,9 @@ next_block:
 			set_inode_flag(inode, FI_APPEND_WRITE);
 		}
 	} else {
+/** comment by hy 2020-09-09
+ * # 如果不存在旧数据
+ */
 		if (create) {
 			if (unlikely(f2fs_cp_error(sbi))) {
 				err = -EIO;
@@ -1543,6 +1639,9 @@ next_block:
 			}
 			if (flag == F2FS_GET_BLOCK_PRE_AIO) {
 				if (blkaddr == NULL_ADDR) {
+/** comment by hy 2020-09-09
+ * # 记录有多少个添加写的block
+ */
 					prealloc++;
 					last_ofs_in_node = dn.ofs_in_node;
 				}
@@ -1556,7 +1655,13 @@ next_block:
 			}
 			if (err)
 				goto sync_out;
+/** comment by hy 2020-09-09
+ * # 2FS_MAP_NEW表示正在处理一个从未使用的数据
+ */
 			map->m_flags |= F2FS_MAP_NEW;
+/** comment by hy 2020-09-09
+ * # 记录当前的物理地址
+ */
 			blkaddr = dn.data_blkaddr;
 		} else {
 			if (flag == F2FS_GET_BLOCK_BMAP) {
@@ -1602,14 +1707,26 @@ next_block:
 	}
 
 skip:
+/** comment by hy 2020-09-09
+ * # 记录处理了多少个block
+ */
 	dn.ofs_in_node++;
 	pgofs++;
 
 	/* preallocate blocks in batch for one dnode page */
+/** comment by hy 2020-09-09
+ * # 这里表示已经处理到最后一个block了
+ */
 	if (flag == F2FS_GET_BLOCK_PRE_AIO &&
 			(pgofs == end || dn.ofs_in_node == end_offset)) {
 
+/** comment by hy 2020-09-09
+ * # 回到第一个block
+ */
 		dn.ofs_in_node = ofs_in_node;
+/** comment by hy 2020-09-09
+ * # 通过这个函数将其地址设置为NEW_ADDR
+ */
 		err = f2fs_reserve_new_blocks(&dn, prealloc);
 		if (err)
 			goto sync_out;
@@ -1622,6 +1739,11 @@ skip:
 		dn.ofs_in_node = end_offset;
 	}
 
+/** comment by hy 2020-09-09
+ * # 表示已经全部处理完，可以退出这个函数了
+     每执行上面的流程就处理一个block
+     如果没有处理所有用户写入的block，那么回去继续处理
+ */
 	if (pgofs >= end)
 		goto sync_out;
 	else if (dn.ofs_in_node < end_offset)
@@ -2024,6 +2146,14 @@ static int f2fs_read_single_page(struct inode *inode, struct page *page,
 	/*
 	 * Map blocks using the previous result first.
 	 */
+/** comment by hy 2020-09-10
+ * # map.m_lblk是上一个block_in_file
+ *   map.m_lblk + map.m_len是需要读取长度的最后一个blokaddr
+ *   因此这里的意思是
+     如果是在这个 map.m_lblk < block_in_file < map.m_lblk + map.m_len
+ *   这个范围里面，不需要map，直接将上次的blkaddr+1就是需要的地址
+     如果上一次找到了page，则跳到 got_it 通过bio获取page的具体数据
+ */
 	if ((map->m_flags & F2FS_MAP_MAPPED) &&
 			block_in_file > map->m_lblk &&
 			block_in_file < (map->m_lblk + map->m_len))
@@ -2033,13 +2163,25 @@ static int f2fs_read_single_page(struct inode *inode, struct page *page,
 	 * Then do more f2fs_map_blocks() calls until we are
 	 * done with this page.
 	 */
+/** comment by hy 2020-09-10
+ * # l使用page offset和length，通过f2fs_map_blocks获得物理地址
+ */
+/** comment by hy 2020-09-10
+ * # 文件的第几个block
+ */
 	map->m_lblk = block_in_file;
+/** comment by hy 2020-09-10
+ * # 读取的block的长度
+ */
 	map->m_len = last_block - block_in_file;
 
 	ret = f2fs_map_blocks(inode, map, 0, F2FS_GET_BLOCK_DEFAULT);
 	if (ret)
 		goto out;
 got_it:
+/** comment by hy 2020-09-10
+ * # 通过map的结果执行不一样的处理方式
+ */
 	if ((map->m_flags & F2FS_MAP_MAPPED)) {
 		block_nr = map->m_pblk + block_in_file - map->m_lblk;
 		SetPageMappedToDisk(page);
@@ -2057,6 +2199,9 @@ got_it:
 		}
 	} else {
 zero_out:
+/** comment by hy 2020-09-10
+ * # 获取失败了，则跳过这个page
+ */
 		zero_user_segment(page, 0, PAGE_SIZE);
 		if (f2fs_need_verity(inode, page->index) &&
 		    !fsverity_verify_page(page)) {
@@ -2073,13 +2218,33 @@ zero_out:
 	 * This page will go to BIO.  Do we need to send this
 	 * BIO off first?
 	 */
+/** comment by hy 2020-09-10
+ * 这部分开始用于将物理地址通过submit_bio提交到磁盘读取数据
+ * 由于从磁盘读取数据是一个相对耗时的操作，
+ * 因此显然每读取一个页就访问一次磁盘一次的方式是低效的且影响读性能的，
+ * 所以F2FS会尽量一次性提交多个页到磁盘读取数据，以提高性能。
+ * 这部分开始就是具体实现:
+ * 1. 创建一个bio(最大一次性提交256个页)
+ * 2. 将需要读取的页添加到这个bio中，
+ *     ------如果bio未满则将page添加到bio中
+ *     ------如果bio满了立即访问磁盘读取
+ *     ------如果循环结束以后，bio还是未满，则通过本函数末尾的操作提交未满的bio
+   判断bio装的page是否到了设定的最大数量，如果到了最大值则先发送到磁盘
+ */
 	if (bio && !page_is_mergeable(F2FS_I_SB(inode), bio,
 				*last_block_in_bio, block_nr)) {
 submit_and_realloc:
 		__submit_bio(F2FS_I_SB(inode), bio, DATA);
 		bio = NULL;
 	}
+/** comment by hy 2020-09-10
+ * # bio是空，则创建一个bio，然后指定的f2fs_read_end_io进行读取
+ */
 	if (bio == NULL) {
+/** comment by hy 2020-09-10
+ * # 创建bio
+     设定bio的sector地址
+ */
 		bio = f2fs_grab_read_bio(inode, block_nr, nr_pages,
 				is_readahead ? REQ_RAHEAD : 0, page->index,
 				false);
@@ -2096,6 +2261,9 @@ submit_and_realloc:
 	 */
 	f2fs_wait_on_block_writeback(inode, block_nr);
 
+/** comment by hy 2020-09-10
+ * # 将page加入到bio中，等待第五步满了之后发送到磁盘
+ */
 	if (bio_add_page(bio, page, blocksize, 0) < blocksize)
 		goto submit_and_realloc;
 
@@ -2105,6 +2273,9 @@ submit_and_realloc:
 	*last_block_in_bio = block_nr;
 	goto out;
 confused:
+/** comment by hy 2020-09-10
+ * # 特殊情况进行submit bio
+ */
 	if (bio) {
 		__submit_bio(F2FS_I_SB(inode), bio, DATA);
 		bio = NULL;
@@ -2276,6 +2447,9 @@ static int f2fs_mpage_readpages(struct inode *inode,
 {
 	struct bio *bio = NULL;
 	sector_t last_block_in_bio = 0;
+/** comment by hy 2020-09-10
+ * # 遍历传入的page，得到每一个page的index以及inode
+ */
 	struct f2fs_map_blocks map;
 #ifdef CONFIG_F2FS_FS_COMPRESSION
 	struct compress_ctx cc = {
@@ -2302,6 +2476,9 @@ static int f2fs_mpage_readpages(struct inode *inode,
 	map.m_seg_type = NO_CHECK_TYPE;
 	map.m_may_create = false;
 
+/** comment by hy 2020-09-10
+ * # 将page的inode以及index传入 f2fs_map_blocks 函数获取到该page的物理地址
+ */
 	for (; nr_pages; nr_pages--) {
 		if (rac) {
 			page = readahead_page(rac);
@@ -2336,7 +2513,9 @@ static int f2fs_mpage_readpages(struct inode *inode,
 		}
 read_single_page:
 #endif
-
+/** comment by hy 2020-09-10
+ * # 从list里面读取每一次的page结构
+ */
 		ret = f2fs_read_single_page(inode, page, max_nr_pages, &map,
 					&bio, &last_block_in_bio, rac);
 		if (ret) {
@@ -2366,6 +2545,10 @@ next_page:
 		}
 #endif
 	}
+/** comment by hy 2020-09-10
+ * 如果还有bio没有处理，例如读取的页遍历完以后，
+   还没有达到要求的bio的最大保存页数，就会在这里提交bio到磁盘读取
+ */
 	if (bio)
 		__submit_bio(F2FS_I_SB(inode), bio, DATA);
 	return ret;
@@ -2384,8 +2567,14 @@ static int f2fs_read_data_page(struct file *file, struct page *page)
 	}
 
 	/* If the file has inline data, try to read it directly */
+/** comment by hy 2020-09-10
+ * # inline文件使用特定的读取方法，这里暂不分析
+ */
 	if (f2fs_has_inline_data(inode))
 		ret = f2fs_read_inline_data(inode, page);
+/** comment by hy 2020-09-10
+ * # 读取1个page
+ */
 	if (ret == -EAGAIN)
 		ret = f2fs_mpage_readpages(inode, NULL, page);
 	return ret;
@@ -2539,9 +2728,18 @@ int f2fs_do_write_data_page(struct f2fs_io_info *fio)
 	bool ipu_force = false;
 	int err = 0;
 
+/** comment by hy 2020-09-09
+ * # 初始化dnode
+ */
 	set_new_dnode(&dn, inode, NULL, NULL, 0);
+/** comment by hy 2020-09-09
+ * # 根据文件偏移page->index获取物理地址
+ */
 	if (need_inplace_update(fio) &&
 			f2fs_lookup_extent_cache(inode, page->index, &ei)) {
+/** comment by hy 2020-09-09
+ * # 将旧的物理地址赋值给fio->old_blkaddr
+ */
 		fio->old_blkaddr = ei.blk + page->index - ei.fofs;
 
 		if (!f2fs_is_valid_blkaddr(fio->sbi, fio->old_blkaddr,
@@ -2564,6 +2762,11 @@ int f2fs_do_write_data_page(struct f2fs_io_info *fio)
 	fio->old_blkaddr = dn.data_blkaddr;
 
 	/* This page is already truncated */
+/** comment by hy 2020-09-09
+ * # f2fs_file_write_iter已经将物理地址设置为NEW_ADDR或者具体的block号，
+    因此这里表示在写入磁盘之前，用户又将这部分数据删除了
+    所以没必要写入了
+ */
 	if (fio->old_blkaddr == NULL_ADDR) {
 		ClearPageUptodate(page);
 		clear_cold_data(page);
@@ -2580,6 +2783,9 @@ got_it:
 	 * If current allocation needs SSR,
 	 * it had better in-place writes for updated data.
 	 */
+/** comment by hy 2020-09-09
+ * # 判断是否需要就地更新
+ */
 	if (ipu_force ||
 		(__is_valid_data_blkaddr(fio->old_blkaddr) &&
 					need_inplace_update(fio))) {
@@ -2592,6 +2798,9 @@ got_it:
 		f2fs_put_dnode(&dn);
 		if (fio->need_lock == LOCK_REQ)
 			f2fs_unlock_op(fio->sbi);
+/** comment by hy 2020-09-09
+ * # 使用就地更新的方式写入
+ */
 		err = f2fs_inplace_write_data(fio);
 		if (err) {
 			if (f2fs_encrypted_file(inode))
@@ -2619,6 +2828,9 @@ got_it:
 
 	fio->version = ni.version;
 
+/** comment by hy 2020-09-09
+ * # 如果开启系统加密，会将这个fio->page先加密
+ */
 	err = f2fs_encrypt_one_page(fio);
 	if (err)
 		goto out_writepage;
@@ -2630,6 +2842,9 @@ got_it:
 		f2fs_i_compr_blocks_update(inode, fio->compr_blocks - 1, false);
 
 	/* LFS mode write path */
+/** comment by hy 2020-09-09
+ * # 执行异地更新函数
+ */
 	f2fs_outplace_write_data(&dn, fio);
 	trace_f2fs_do_write_data_page(page, OPU);
 	set_inode_flag(inode, FI_APPEND_WRITE);
@@ -2659,6 +2874,11 @@ int f2fs_write_single_data_page(struct page *page, int *submitted,
 	unsigned offset = 0;
 	bool need_balance_fs = false;
 	int err = 0;
+/** comment by hy 2020-09-09
+ * # 这个数据结构在整个写流程非常重要，记录了写入的信息
+     键变量是 fio->old_blkaddr
+     以及 fio->new_blkaddr记录旧地址和新地址
+ */
 	struct f2fs_io_info fio = {
 		.sbi = sbi,
 		.ino = inode->i_ino,
@@ -2666,7 +2886,7 @@ int f2fs_write_single_data_page(struct page *page, int *submitted,
 		.op = REQ_OP_WRITE,
 		.op_flags = wbc_to_write_flags(wbc),
 		.old_blkaddr = NULL_ADDR,
-		.page = page,
+		.page = page, //即将写入的page
 		.encrypted_page = NULL,
 		.submitted = false,
 		.compr_blocks = compr_blocks,
@@ -2718,6 +2938,9 @@ write:
 		goto redirty_out;
 
 	/* Dentry/quota blocks are controlled by checkpoint */
+/** comment by hy 2020-09-09
+ * # 如果是目录文件，直接写入不需要修改
+ */
 	if (S_ISDIR(inode->i_mode) || IS_NOQUOTA(inode)) {
 		fio.need_lock = LOCK_DONE;
 		err = f2fs_do_write_data_page(&fio);
@@ -2732,13 +2955,23 @@ write:
 		set_inode_flag(inode, FI_HOT_DATA);
 
 	err = -EAGAIN;
+/** comment by hy 2020-09-09
+ * # 内联文件使用内联的写入方式
+ */
 	if (f2fs_has_inline_data(inode)) {
 		err = f2fs_write_inline_data(inode, page);
 		if (!err)
 			goto out;
 	}
 
+/** comment by hy 2020-09-09
+ * # 普通文件则使用普通的方式
+ */
 	if (err == -EAGAIN) {
+/** comment by hy 2020-09-09
+ * # 根据系统的状态选择就地更新数据(inplace update)
+     还是异地更新数据(outplace update)
+ */
 		err = f2fs_do_write_data_page(&fio);
 		if (err == -EAGAIN) {
 			fio.need_lock = LOCK_REQ;
@@ -2760,6 +2993,9 @@ done:
 		goto redirty_out;
 
 out:
+/** comment by hy 2020-09-09
+ * # 每写入一个page，就清除了inode一个dirty pages，因此数目减去1
+ */
 	inode_dec_dirty_pages(inode);
 	if (err) {
 		ClearPageUptodate(page);
@@ -2866,6 +3102,9 @@ static int f2fs_write_cache_pages(struct address_space *mapping,
 	int submitted = 0;
 	int i;
 
+/** comment by hy 2020-09-09
+ * # 这是一个用于装载page的数组，数组大小是15个page
+ */
 	pagevec_init(&pvec);
 
 	if (get_dirty_pages(mapping->host) <=
@@ -2884,21 +3123,35 @@ static int f2fs_write_cache_pages(struct address_space *mapping,
 		if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
 			range_whole = 1;
 	}
+/** comment by hy 2020-09-09
+ * # tag是mapping给每一个pae的标志，用于标志这些page的属性
+ */
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag = PAGECACHE_TAG_TOWRITE;
 	else
 		tag = PAGECACHE_TAG_DIRTY;
 retry:
 	retry = 0;
+/** comment by hy 2020-09-09
+ * # SYNC模式下
+     将所有的tag=PAGECACHE_TAG_DIRTY的page重新标志为PAGECACHE_TAG_TOWRITE
+     作用是SYNC模式下必须全部回写到磁盘
+ */
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag_pages_for_writeback(mapping, index, end);
 	done_index = index;
 	while (!done && !retry && (index <= end)) {
+/** comment by hy 2020-09-09
+ * # 从mapping中取出tag类型的15个page，装载到pvec中
+ */
 		nr_pages = pagevec_lookup_range_tag(&pvec, mapping, &index, end,
 				tag);
 		if (nr_pages == 0)
 			break;
 
+/** comment by hy 2020-09-09
+ * # 循环将pvec中的page取出，回写到磁盘
+ */
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
 			bool need_readd;
@@ -2990,6 +3243,9 @@ continue_unlock:
 				continue;
 			}
 #endif
+/** comment by hy 2020-09-09
+ * # 写入磁盘的核心函数
+ */
 			ret = f2fs_write_single_data_page(page, &submitted,
 					&bio, &last_block, wbc, io_type, 0);
 			if (ret == AOP_WRITEPAGE_ACTIVATE)
@@ -3022,7 +3278,9 @@ result:
 				done = 1;
 				break;
 			}
-
+/** comment by hy 2020-09-09
+ * # 果本次writeback的所有page写完就退出
+ */
 			if (wbc->nr_to_write <= 0 &&
 					wbc->sync_mode == WB_SYNC_NONE) {
 				done = 1;
@@ -3032,6 +3290,9 @@ next:
 			if (need_readd)
 				goto readd;
 		}
+/** comment by hy 2020-09-09
+ * # 释放掉pvec
+ */
 		pagevec_release(&pvec);
 		cond_resched();
 	}
@@ -3061,6 +3322,11 @@ next:
 		f2fs_submit_merged_write_cond(F2FS_M_SB(mapping), mapping->host,
 								NULL, 0, DATA);
 	/* submit cached bio of IPU write */
+/** comment by hy 2020-09-09
+ * # page通过一些函数后，会放入到bio中，然后提交到磁盘。
+     f2fs的机制是不会马上提交bio，
+     需要等到bio包含了一定数目的page之后才会提交
+ */
 	if (bio)
 		f2fs_submit_merged_ipu_write(sbi, &bio, NULL);
 
@@ -3134,6 +3400,9 @@ static int __f2fs_write_data_pages(struct address_space *mapping,
 	}
 
 	blk_start_plug(&plug);
+/** comment by hy 2020-09-09
+ * # inode对应的mapping(radix tree的root)中，取出所有需要回写的page，然后写入
+ */
 	ret = f2fs_write_cache_pages(mapping, wbc, io_type);
 	blk_finish_plug(&plug);
 
@@ -3147,6 +3416,9 @@ static int __f2fs_write_data_pages(struct address_space *mapping,
 	 * to detect pending bios.
 	 */
 
+/** comment by hy 2020-09-09
+ * # 写入后将inode从dirty标志清除，即不需要再回写
+ */
 	f2fs_remove_dirty_inode(inode);
 	return ret;
 
@@ -3161,6 +3433,9 @@ static int f2fs_write_data_pages(struct address_space *mapping,
 {
 	struct inode *inode = mapping->host;
 
+/** comment by hy 2020-09-09
+ * # 这个函数可以知道当前是普通的写入，还是Checkpoint数据的写入
+ */
 	return __f2fs_write_data_pages(mapping, wbc,
 			F2FS_I(inode)->cp_task == current ?
 			FS_CP_DATA_IO : FS_DATA_IO);
@@ -3334,6 +3609,9 @@ repeat:
 	 * Do not use grab_cache_page_write_begin() to avoid deadlock due to
 	 * wait_for_stable_page. Will wait that below with our IO control.
 	 */
+/** comment by hy 2020-09-09
+ * # 第一步创建或者获取page cache
+ */
 	page = f2fs_pagecache_get_page(mapping, index,
 				FGP_LOCK | FGP_WRITE | FGP_CREAT, GFP_NOFS);
 	if (!page) {
@@ -3345,6 +3623,9 @@ repeat:
 
 	*pagep = page;
 
+/** comment by hy 2020-09-09
+ * # 第二步根据页偏移信息获取到对应的物理地址blkaddr
+ */
 	err = prepare_write_begin(sbi, page, pos, len,
 					&blkaddr, &need_balance);
 	if (err)
@@ -3373,15 +3654,27 @@ repeat:
 		return 0;
 	}
 
+/** comment by hy 2020-09-09
+ * # 第三步，根据写类型对新创建的page进行初始化处理
+ */
 	if (blkaddr == NEW_ADDR) {
+/** comment by hy 2020-09-09
+ * # 如果是添加写，则将该page直接使用0填充
+ */
 		zero_user_segment(page, 0, PAGE_SIZE);
 		SetPageUptodate(page);
 	} else {
+/** comment by hy 2020-09-09
+ * # 如果是覆盖写，则将该page直接使用0填充
+ */
 		if (!f2fs_is_valid_blkaddr(sbi, blkaddr,
 				DATA_GENERIC_ENHANCE_READ)) {
 			err = -EFSCORRUPTED;
 			goto fail;
 		}
+/** comment by hy 2020-09-09
+ * # 从磁盘中将旧数据读取出来
+ */
 		err = f2fs_submit_page_read(inode, page, blkaddr, true);
 		if (err)
 			goto fail;
@@ -3420,6 +3713,10 @@ static int f2fs_write_end(struct file *file,
 	 * should be PAGE_SIZE. Otherwise, we treat it with zero copied and
 	 * let generic_perform_write() try to copy data again through copied=0.
 	 */
+/** comment by hy 2020-09-09
+ * # 判断是否已经将page cache在写入是否到达了最新的状态
+     如果不是就处理后设置为最新
+ */
 	if (!PageUptodate(page)) {
 		if (unlikely(copied != len))
 			copied = 0;
@@ -3439,13 +3736,22 @@ static int f2fs_write_end(struct file *file,
 	if (!copied)
 		goto unlock_out;
 
+/** comment by hy 2020-09-09
+ * # 将page设置为dirty，就会加入到inode->mapping的radix tree中，等待系统回写
+ */
 	set_page_dirty(page);
 
+/** comment by hy 2020-09-09
+ * # 更新文件尺寸
+ */
 	if (pos + copied > i_size_read(inode) &&
 	    !f2fs_verity_in_progress(inode))
 		f2fs_i_size_write(inode, pos + copied);
 unlock_out:
 	f2fs_put_page(page, 1);
+/** comment by hy 2020-09-09
+ * # 更新文件修改日期
+ */
 	f2fs_update_time(F2FS_I_SB(inode), REQ_TIME);
 	return copied;
 }

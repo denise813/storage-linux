@@ -3934,6 +3934,19 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		preallocated = true;
 		target_size = iocb->ki_pos + iov_iter_count(from);
 
+/** comment by hy 2020-09-09
+ * # 进行预处理
+     该文件对应f2fs_inode或者direct_node
+     对应写入位置的i_addr或者addr的值进行初始化
+     例如用户需要在第4个page的位置写入数据
+     那么f2fs_file_write_iter函数会首先找到该文件对应的f2fs_inode
+     然后找到第4个page对应的数据块地址记录
+     即f2fs_inode->i_addr[3]
+     如果该位置的值是NULL_ADDR则表示当前是添加写(Append Write)
+     因此将值初始化为NEW_ADDR;
+     如果是该位置的值是一个具体的block号
+     那么表示为覆盖写(Overwrite)，不需要做处理
+ */
 		err = f2fs_preallocate_blocks(iocb, from);
 		if (err) {
 out_err:
@@ -3943,6 +3956,9 @@ out_err:
 			goto out;
 		}
 write:
+/** comment by hy 2020-09-09
+ * # 预处理完成后继续执行下一步写流程
+ */
 		ret = __generic_file_write_iter(iocb, from);
 		clear_inode_flag(inode, FI_NO_PREALLOC);
 

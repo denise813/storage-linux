@@ -71,9 +71,15 @@ static inline void increase_sleep_time(struct f2fs_gc_kthread *gc_th,
 	unsigned int min_time = gc_th->min_sleep_time;
 	unsigned int max_time = gc_th->max_sleep_time;
 
+/** comment by hy 2020-09-10
+ * # 目前的等待时间等于no_gc_sleep_time则不做变化
+ */
 	if (*wait == gc_th->no_gc_sleep_time)
 		return;
 
+/** comment by hy 2020-09-10
+ * # 增加30秒的gc间隔时间
+ */
 	if ((long long)*wait + (long long)min_time > (long long)max_time)
 		*wait = max_time;
 	else
@@ -85,9 +91,15 @@ static inline void decrease_sleep_time(struct f2fs_gc_kthread *gc_th,
 {
 	unsigned int min_time = gc_th->min_sleep_time;
 
+/** comment by hy 2020-09-10
+ * # 如果目前的等待时间等于no_gc_sleep_time，则不做变化
+ */
 	if (*wait == gc_th->no_gc_sleep_time)
 		*wait = gc_th->max_sleep_time;
 
+/** comment by hy 2020-09-10
+ * # 减少30秒的gc间隔时间
+ */
 	if ((long long)*wait - (long long)min_time < (long long)min_time)
 		*wait = min_time;
 	else

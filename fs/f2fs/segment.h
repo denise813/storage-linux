@@ -442,6 +442,12 @@ static inline void __set_test_and_free(struct f2fs_sb_info *sbi,
 	unsigned int next;
 
 	spin_lock(&free_i->segmap_lock);
+/** comment by hy 2020-09-10
+ * # free_i->free_segmap用这个bitmap表示这个segment是否是dirty
+ * 如果这个segno对应的segment位置等于0，代表不是dirty，不作处理
+ * 如果这个segno对应的位置等于1，表示这个segment是dirty的
+   那么在当前的free_segment+1，更新最新的free_segment信息
+ */
 	if (test_and_clear_bit(segno, free_i->free_segmap)) {
 		free_i->free_segments++;
 

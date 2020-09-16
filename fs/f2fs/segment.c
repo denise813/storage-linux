@@ -1931,6 +1931,10 @@ static void set_prefree_as_free_segments(struct f2fs_sb_info *sbi)
 	unsigned int segno;
 
 	mutex_lock(&dirty_i->seglist_lock);
+/** comment by hy 2020-09-10
+ * # 遍历dirty_seglist_info->dirty_segmap[PRE]，然后执行__set_test_and_free
+     __set_test_and_free 根据segno更新free_segmap的可用信息
+ */
 	for_each_set_bit(segno, dirty_i->dirty_segmap[PRE], MAIN_SEGS(sbi))
 		__set_test_and_free(sbi, segno);
 	mutex_unlock(&dirty_i->seglist_lock);
@@ -3120,6 +3124,9 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	mutex_lock(&curseg->curseg_mutex);
 	down_write(&sit_i->sentry_lock);
 
+/** comment by hy 2020-09-09
+ * # 获取新的物理地址
+ */
 	*new_blkaddr = NEXT_FREE_BLKADDR(sbi, curseg);
 
 	f2fs_wait_discard_bio(sbi, *new_blkaddr);
@@ -3129,8 +3136,14 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	 * because, this function updates a summary entry in the
 	 * current summary block.
 	 */
+/** comment by hy 2020-09-09
+ * # 将当前summary更新到CURSEG中
+ */
 	__add_sum_entry(sbi, type, sum);
 
+/** comment by hy 2020-09-09
+ * # 更新下一次可以用的物理地址
+ */
 	__refresh_next_blkoff(sbi, curseg);
 
 	stat_inc_block_count(sbi, curseg);
@@ -3139,10 +3152,22 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	 * SIT information should be updated before segment allocation,
 	 * since SSR needs latest valid block information.
 	 */
+/** comment by hy 2020-09-09
+ * # 下面更新主要是更新SIT区域的segment信息
+      根据new_blkaddr找到对应的sit_entry，
+      然后更新状态为valid(值为1)，表示被用户使用，不可被其他人所使用
+ */
 	update_sit_entry(sbi, *new_blkaddr, 1);
+/** comment by hy 2020-09-09
+ * # 根据old_blkaddr找到对应的sit_entry
+     然后更新状态为invalid(值为-1)，表示被覆盖了，等待GC回收后重新投入使用
+ */
 	if (GET_SEGNO(sbi, old_blkaddr) != NULL_SEGNO)
 		update_sit_entry(sbi, old_blkaddr, -1);
 
+/** comment by hy 2020-09-09
+ * # 如果当前segment没有空间进行下一次分配了，就分配一个新的segment给CURSEG
+ */
 	if (!__has_curseg_space(sbi, type))
 		sit_i->s_ops->allocate_segment(sbi, type, false);
 
@@ -3151,6 +3176,9 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	 * so we just need to update status only one time after previous
 	 * segment being closed.
 	 */
+/** comment by hy 2020-09-09
+ * # 将segment设置为脏，等CP写回磁盘
+ */
 	locate_dirty_segment(sbi, GET_SEGNO(sbi, old_blkaddr));
 	locate_dirty_segment(sbi, GET_SEGNO(sbi, *new_blkaddr));
 
@@ -3210,12 +3238,19 @@ static void update_device_state(struct f2fs_io_info *fio)
 
 static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 {
+/** comment by hy 2020-09-09
+ * # 取数据类型，这个类型指HOT/WARM/COLD X NODE/DATA的六种类型
+ */
 	int type = __get_segment_type(fio);
 	bool keep_order = (f2fs_lfs_mode(fio->sbi) && type == CURSEG_COLD_DATA);
 
 	if (keep_order)
 		down_read(&fio->sbi->io_order_lock);
 reallocate:
+/** comment by hy 2020-09-09
+ * # 分配一个新的物理地址
+     将数据写入新的物理地址
+ */
 	f2fs_allocate_data_block(fio->sbi, fio->page, fio->old_blkaddr,
 			&fio->new_blkaddr, sum, type, fio, true);
 	if (GET_SEGNO(fio->sbi, fio->old_blkaddr) != NULL_SEGNO)
@@ -3223,6 +3258,9 @@ reallocate:
 					fio->old_blkaddr, fio->old_blkaddr);
 
 	/* writeout dirty page into bdev */
+/** comment by hy 2020-09-09
+ * # 将旧的物理地址无效掉，然后等GC回收
+ */
 	f2fs_submit_page_write(fio);
 	if (fio->retry) {
 		fio->old_blkaddr = fio->new_blkaddr;
@@ -3280,7 +3318,15 @@ void f2fs_outplace_write_data(struct dnode_of_data *dn,
 
 	f2fs_bug_on(sbi, dn->data_blkaddr == NULL_ADDR);
 	set_summary(&sum, dn->nid, dn->ofs_in_node, fio->version);
+/** comment by hy 2020-09-09
+ * # 分配一个新的物理地址
+     将数据写入新的物理地址
+     将旧的物理地址无效掉，然后等GC回收
+ */
 	do_write_page(&sum, fio);
+/** comment by hy 2020-09-09
+ * # 更新逻辑地址和物理地址的映射关系
+ */
 	f2fs_update_data_blkaddr(dn, fio->new_blkaddr);
 
 	f2fs_update_iostat(sbi, fio->io_type, F2FS_BLKSIZE);
@@ -3664,7 +3710,13 @@ static void write_compacted_summaries(struct f2fs_sb_info *sbi, block_t blkaddr)
 	memset(kaddr, 0, PAGE_SIZE);
 
 	/* Step 1: write nat cache */
+/** comment by hy 2020-09-10
+ * # 第一步写nat的journal
+ */
 	seg_i = CURSEG_I(sbi, CURSEG_HOT_DATA);
+/** comment by hy 2020-09-10
+ * # 第二步写sit的journal
+ */
 	memcpy(kaddr, seg_i->journal, SUM_JOURNAL_SIZE);
 	written_size += SUM_JOURNAL_SIZE;
 
@@ -3674,6 +3726,9 @@ static void write_compacted_summaries(struct f2fs_sb_info *sbi, block_t blkaddr)
 	written_size += SUM_JOURNAL_SIZE;
 
 	/* Step 3: write summary entries */
+/** comment by hy 2020-09-10
+ * # 开始写summary
+ */
 	for (i = CURSEG_HOT_DATA; i <= CURSEG_COLD_DATA; i++) {
 		unsigned short blkoff;
 		seg_i = CURSEG_I(sbi, i);
@@ -3683,6 +3738,10 @@ static void write_compacted_summaries(struct f2fs_sb_info *sbi, block_t blkaddr)
 			blkoff = curseg_blkoff(sbi, i);
 
 		for (j = 0; j < blkoff; j++) {
+/** comment by hy 2020-09-10
+ * # 如果f2fs compacted block写不下
+     则创建一个纯summary的block
+ */
 			if (!page) {
 				page = f2fs_grab_meta_page(sbi, blkaddr++);
 				kaddr = (unsigned char *)page_address(page);
@@ -3697,6 +3756,10 @@ static void write_compacted_summaries(struct f2fs_sb_info *sbi, block_t blkaddr)
 							SUM_FOOTER_SIZE)
 				continue;
 
+/** comment by hy 2020-09-10
+ * # 如果超过了compaced sum block可以承载的极限
+     就设置这个block是脏，等待回写
+ */
 			set_page_dirty(page);
 			f2fs_put_page(page, 1);
 			page = NULL;
@@ -3717,12 +3780,22 @@ static void write_normal_summaries(struct f2fs_sb_info *sbi,
 	else
 		end = type + NR_CURSEG_NODE_TYPE;
 
+/** comment by hy 2020-09-10
+ * # 根据 HOW WARM COLD 都写入磁盘
+ */
 	for (i = type; i < end; i++)
 		write_current_sum_page(sbi, i, blkaddr + (i - type));
 }
 
 void f2fs_write_data_summaries(struct f2fs_sb_info *sbi, block_t start_blk)
 {
+/** comment by hy 2020-09-10
+ * # write_compacted_summaries
+     compacted block的数据分布，将数据写入到磁盘中
+     write_normal_summaries函数
+     则是简单地将按照HOT/WARM/COLD的
+     顺序写入到checkpoint区域中
+ */
 	if (is_set_ckpt_flags(sbi, CP_COMPACT_SUM_FLAG))
 		write_compacted_summaries(sbi, start_blk);
 	else
@@ -3888,6 +3961,10 @@ void f2fs_flush_sit_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	 * add and account sit entries of dirty bitmap in sit entry
 	 * set temporarily
 	 */
+/** comment by hy 2020-09-10
+ * # 遍历所有dirty的segment的segno，
+ *   找到对应的sit_entry_set，然后保存到sbi->sm_info->sit_entry_set
+ */
 	add_sits_in_set(sbi);
 
 	/*
@@ -3904,6 +3981,9 @@ void f2fs_flush_sit_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	 * #1, flush sit entries to journal in current cold data summary block.
 	 * #2, flush sit entries to sit page.
 	 */
+/** comment by hy 2020-09-10
+ * # 遍历list中的所有segno对应的sit_entry_set
+ */
 	list_for_each_entry_safe(ses, tmp, head, set_list) {
 		struct page *page = NULL;
 		struct f2fs_sit_block *raw_sit = NULL;
@@ -3919,14 +3999,28 @@ void f2fs_flush_sit_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 		if (to_journal) {
 			down_write(&curseg->journal_rwsem);
 		} else {
+/** comment by hy 2020-09-10
+ * # 访问磁盘，从磁盘获取到f2fs_sit_block
+ */
 			page = get_next_sit_page(sbi, start_segno);
+/** comment by hy 2020-09-10
+ * # 根据segno获得f2fs_sit_block，然后下一步将数据写入这个block当中
+ */
 			raw_sit = page_address(page);
 		}
 
 		/* flush dirty sit entries in region of current sit set */
+/** comment by hy 2020-09-10
+ * # 遍历segno~end所有dirty的seg_entry
+ */
 		for_each_set_bit_from(segno, bitmap, end) {
 			int offset, sit_offset;
 
+/** comment by hy 2020-09-10
+ * # 根据segno从SIT缓存中获取到seg_entry
+     这个缓存是F2FS初始化的时候
+     将全部seg_entry读入创建的
+ */
 			se = get_seg_entry(sbi, segno);
 #ifdef CONFIG_F2FS_CHECK_FS
 			if (memcmp(se->cur_valid_map, se->cur_valid_map_mir,
@@ -3946,18 +4040,27 @@ void f2fs_flush_sit_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 				f2fs_bug_on(sbi, offset < 0);
 				segno_in_journal(journal, offset) =
 							cpu_to_le32(segno);
+/** comment by hy 2020-09-10
+ * # 更新journal的数据
+ */
 				seg_info_to_raw_sit(se,
 					&sit_in_journal(journal, offset));
 				check_block_count(sbi, segno,
 					&sit_in_journal(journal, offset));
 			} else {
 				sit_offset = SIT_ENTRY_OFFSET(sit_i, segno);
+/** comment by hy 2020-09-10
+ * # 更新f2fs_sit_block的数据
+ */
 				seg_info_to_raw_sit(se,
 						&raw_sit->entries[sit_offset]);
 				check_block_count(sbi, segno,
 						&raw_sit->entries[sit_offset]);
 			}
 
+/** comment by hy 2020-09-10
+ * # 从dirty map中除名
+ */
 			__clear_bit(segno, bitmap);
 			sit_i->dirty_sentries--;
 			ses->entry_cnt--;
@@ -3985,6 +4088,13 @@ out:
 	}
 	up_write(&sit_i->sentry_lock);
 
+/** comment by hy 2020-09-10
+ * # 通过CP的时机，将暂存在dirty_segmap的dirty的segment信息
+     更新到free_segmap中而且与接下来的do_checkpoint完成的
+     f2fs_clear_prefree_segments有关系，因为 这里处理完了
+     dirty prefree segments
+     所以在f2fs_clear_prefree_segments这个函数将它的dirty标记清除
+ */
 	set_prefree_as_free_segments(sbi);
 }
 

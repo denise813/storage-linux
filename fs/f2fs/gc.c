@@ -28,6 +28,9 @@ static int gc_thread_func(void *data)
 	wait_queue_head_t *wq = &sbi->gc_thread->gc_wait_queue_head;
 	unsigned int wait_ms;
 
+/** comment by hy 2020-09-10
+ * # wait_ms初始化为最小的gc间隔，即30秒
+ */
 	wait_ms = gc_th->min_sleep_time;
 
 	set_freezable();
@@ -49,7 +52,10 @@ static int gc_thread_func(void *data)
 		}
 		if (kthread_should_stop())
 			break;
-
+/** comment by hy 2020-09-10
+ * # 如果f2fs冻结了写操作，则表示没有新分配block，因此增加gc间隔，不做gc
+     调整gc间隔的函
+ */
 		if (sbi->sb->s_writers.frozen >= SB_FREEZE_WRITE) {
 			increase_sleep_time(gc_th, &wait_ms);
 			stat_other_skip_bggc_count(sbi);
@@ -90,13 +96,20 @@ static int gc_thread_func(void *data)
 			goto next;
 		}
 
+/** comment by hy 2020-09-10
+ * # 如果系统处于不是idle的状态，则表示系统忙，
+     因此为了不影响用户体验，增加间隔的同时也不进行gc
+ */
 		if (!is_idle(sbi, GC_TIME)) {
 			increase_sleep_time(gc_th, &wait_ms);
 			up_write(&sbi->gc_lock);
 			stat_io_skip_bggc_count(sbi);
 			goto next;
 		}
-
+/** comment by hy 2020-09-10
+ * # 如果系统空间有很多无效(invalid)的block，则减少触发间隔，增加gc的次数
+     调整gc间隔的函数
+ */
 		if (has_enough_invalid_blocks(sbi))
 			decrease_sleep_time(gc_th, &wait_ms);
 		else
@@ -107,6 +120,12 @@ do_gc:
 		sync_mode = F2FS_OPTION(sbi).bggc_mode == BGGC_MODE_SYNC;
 
 		/* if return value is not zero, no victim was selected */
+/** comment by hy 2020-09-10
+ * # 因为当f2fs_gc返回值不为0的时候
+     表示系统无法找到可以找到足够的invalid的block
+     因此间隔一段较长的时间，
+ * 积累多一点invalid block再进行gc。
+ */
 		if (f2fs_gc(sbi, sync_mode, true, NULL_SEGNO))
 			wait_ms = gc_th->no_gc_sleep_time;
 
@@ -128,19 +147,36 @@ int f2fs_start_gc_thread(struct f2fs_sb_info *sbi)
 	dev_t dev = sbi->sb->s_bdev->bd_dev;
 	int err = 0;
 
+/** comment by hy 2020-09-10
+ * # 分配gc线程所需要的内存空间
+ */
 	gc_th = f2fs_kmalloc(sbi, sizeof(struct f2fs_gc_kthread), GFP_KERNEL);
 	if (!gc_th) {
 		err = -ENOMEM;
 		goto out;
 	}
 
+/** comment by hy 2020-09-10
+ * # 设置最小后台gc触发间隔，DEF_GC_THREAD_MIN_SLEEP_TIME=30秒
+ */
 	gc_th->urgent_sleep_time = DEF_GC_THREAD_URGENT_SLEEP_TIME;
+/** comment by hy 2020-09-10
+ * # 设置最大后台gc触发间隔，DEF_GC_THREAD_MAX_SLEEP_TIME=60秒
+ */
 	gc_th->min_sleep_time = DEF_GC_THREAD_MIN_SLEEP_TIME;
+/** comment by hy 2020-09-10
+ * # 设置没有gc的间隔，DEF_GC_THREAD_NOGC_SLEEP_TIME=300秒
+ */
 	gc_th->max_sleep_time = DEF_GC_THREAD_MAX_SLEEP_TIME;
 	gc_th->no_gc_sleep_time = DEF_GC_THREAD_NOGC_SLEEP_TIME;
 
+/** comment by hy 2020-09-10
+ * # 判断系统是否为空间状态
+ */
 	gc_th->gc_wake= 0;
-
+/** comment by hy 2020-09-10
+ * # 启动线程
+ */
 	sbi->gc_thread = gc_th;
 	init_waitqueue_head(&sbi->gc_thread->gc_wait_queue_head);
 	sbi->gc_thread->f2fs_gc_task = kthread_run(gc_thread_func, sbi,
@@ -191,9 +227,22 @@ static void select_policy(struct f2fs_sb_info *sbi, int gc_type,
 		p->max_search = dirty_i->nr_dirty[type];
 		p->ofs_unit = 1;
 	} else {
+/** comment by hy 2020-09-10
+ * # 赋予gc算法类型，默认有两种算法
+     即greedy算法(GC_GREEDY)，以及cost-benefit算法(GC_CB)
+ */
 		p->gc_mode = select_gc_type(sbi, gc_type);
+/** comment by hy 2020-09-10
+ * # 即脏的segment所对应的segmap，它的作用是标记了这个segmen里面的block有效无效信息
+ */
 		p->dirty_segmap = dirty_i->dirty_segmap[DIRTY];
+/** comment by hy 2020-09-10
+ * # 表示最大搜索次数，等于当前有多少个dirty的segment
+ */
 		p->max_search = dirty_i->nr_dirty[DIRTY];
+/** comment by hy 2020-09-10
+ * # 1 sec = 1 seg ，所以等于1
+ */
 		p->ofs_unit = sbi->segs_per_sec;
 	}
 
@@ -207,6 +256,9 @@ static void select_policy(struct f2fs_sb_info *sbi, int gc_type,
 		p->max_search = sbi->max_victim_search;
 
 	/* let's select beginning hot/small space first in no_heap mode*/
+/** comment by hy 2020-09-10
+ * # 上一个被回收的segment
+ */
 	if (test_opt(sbi, NOHEAP) &&
 		(type == CURSEG_HOT_DATA || IS_NODESEG(type)))
 		p->offset = 0;
@@ -258,16 +310,35 @@ static unsigned int get_cb_cost(struct f2fs_sb_info *sbi, unsigned int segno)
 	unsigned char u;
 	unsigned int i;
 
+/** comment by hy 2020-09-10
+ * # 计算section里面的每一个segment最近一次访问时间
+ */
 	for (i = 0; i < sbi->segs_per_sec; i++)
 		mtime += get_seg_entry(sbi, start + i)->mtime;
+/** comment by hy 2020-09-10
+ * # 获取当前的section有多少个valid block
+ */
 	vblocks = get_valid_blocks(sbi, segno, true);
 
+/** comment by hy 2020-09-10
+ * # 计算平均每一segment的最近一次访问时间
+ */
 	mtime = div_u64(mtime, sbi->segs_per_sec);
+/** comment by hy 2020-09-10
+ * # 计算平均每一个segment的valid block个数
+ */
 	vblocks = div_u64(vblocks, sbi->segs_per_sec);
 
+/** comment by hy 2020-09-10
+ * # 百分比计算所以乘以100，然后计算得到了valid block的比例
+ */
 	u = (vblocks * 100) >> sbi->log_blocks_per_seg;
 
 	/* Handle if the system time has changed by the user */
+/** comment by hy 2020-09-10
+ * # sit_i->min_mtime以及sit_i->max_mtime计算的是每一次gc的时候的最小最大的修改时间
+     因此通过这个比例计算这个section的修改时间在总体的情况下的表现
+ */
 	if (mtime < sit_i->min_mtime)
 		sit_i->min_mtime = mtime;
 	if (mtime > sit_i->max_mtime)
@@ -276,6 +347,9 @@ static unsigned int get_cb_cost(struct f2fs_sb_info *sbi, unsigned int segno)
 		age = 100 - div64_u64(100 * (mtime - sit_i->min_mtime),
 				sit_i->max_mtime - sit_i->min_mtime);
 
+/** comment by hy 2020-09-10
+ * # 公式((100 * (100 - u) * age) / (100 + u))即对应(1 - u) / 2u * age
+ */
 	return UINT_MAX - ((100 * (100 - u) * age) / (100 + u));
 }
 
@@ -286,6 +360,22 @@ static inline unsigned int get_gc_cost(struct f2fs_sb_info *sbi,
 		return get_seg_entry(sbi, segno)->ckpt_valid_blocks;
 
 	/* alloc_mode == LFS */
+/** comment by hy 2020-09-10
+ * # Greedy算法，valid block越多表示cost越大，越不值得gc
+         会选择invalid block最多(valid block最少)的segment进行gc
+     Cost-Benefit算法，这个是考虑了访问时间和valid block开销的算法
+         同时考虑最近一次修改时间以及invalid block个数的算法。
+         因为相当于频繁修改的数据而言，
+         不值得进行GC，因为GC完很快就修改了，
+         同时由于异地更新的特性，导致继续产生invalid block。
+         较长时间未作修改的数据，
+         可以认为迁移以后也相对没那么频繁继续产生invalid block
+         cost = (1 - u) / 2u * age
+         表示valid block在该section中的比例，age代表该section最近一次修改的时间
+         表示对这个section进行gc后的收益
+         则表示开销(读+写)
+         表示上一次修改时间
+ */
 	if (p->gc_mode == GC_GREEDY)
 		return get_valid_blocks(sbi, segno, true);
 	else
@@ -325,10 +415,20 @@ static int get_victim_by_default(struct f2fs_sb_info *sbi,
 	mutex_lock(&dirty_i->seglist_lock);
 	last_segment = MAIN_SECS(sbi) * sbi->segs_per_sec;
 
+/** comment by hy 2020-09-10
+ * # 初始化选择策略
+     设置分配模式，一般为LFS
+ */
 	p.alloc_mode = alloc_mode;
+/** comment by hy 2020-09-10
+ * # 根据gc类型等信息，设定选择策略
+ */
 	select_policy(sbi, gc_type, type, &p);
 
 	p.min_segno = NULL_SEGNO;
+/** comment by hy 2020-09-10
+ * # 根据不同的policy，设定最大回收cost
+ */
 	p.min_cost = get_max_cost(sbi, &p);
 
 	if (*result != NULL_SEGNO) {
@@ -357,6 +457,10 @@ static int get_victim_by_default(struct f2fs_sb_info *sbi,
 		}
 	}
 
+/** comment by hy 2020-09-10
+ * # 前台gc模式要求快速释放空间，因此不做循环寻找
+     直接找到之前BG GC的时候所记录下来适合gc的的segment进行gc
+ */
 	last_victim = sm->last_victim[p.gc_mode];
 	if (p.alloc_mode == LFS && gc_type == FG_GC) {
 		p.min_segno = check_bg_victims(sbi);
@@ -364,10 +468,16 @@ static int get_victim_by_default(struct f2fs_sb_info *sbi,
 			goto got_it;
 	}
 
+/** comment by hy 2020-09-10
+ * # 进入循环，找到一个最小cost的segment
+ */
 	while (1) {
 		unsigned long cost;
 		unsigned int segno;
 
+/** comment by hy 2020-09-10
+ * # 从map里面找到一个dirty的segment所以对应segno出来
+ */
 		segno = find_next_bit(p.dirty_segmap, last_segment, p.offset);
 		if (segno >= last_segment) {
 			if (sm->last_victim[p.gc_mode]) {
@@ -412,13 +522,22 @@ static int get_victim_by_default(struct f2fs_sb_info *sbi,
 		if (gc_type == BG_GC && test_bit(secno, dirty_i->victim_secmap))
 			goto next;
 
+/** comment by hy 2020-09-10
+ * # 计算当前segment的cost
+ */
 		cost = get_gc_cost(sbi, segno, &p);
 
+/** comment by hy 2020-09-10
+ * # 判断更新最小cost
+ */
 		if (p.min_cost > cost) {
 			p.min_segno = segno;
 			p.min_cost = cost;
 		}
 next:
+/** comment by hy 2020-09-10
+ * # 达到了最大搜索次数即退出
+ */
 		if (nsearched >= p.max_search) {
 			if (!sm->last_victim[p.gc_mode] && segno <= last_victim)
 				sm->last_victim[p.gc_mode] = last_victim + 1;
@@ -433,6 +552,9 @@ next:
 got_it:
 		*result = (p.min_segno / p.ofs_unit) * p.ofs_unit;
 got_result:
+/** comment by hy 2020-09-10
+ * # set_bit BG_GC的情况下设定这个map，给FG_GC快速寻找segment进行gc
+ */
 		if (p.alloc_mode == LFS) {
 			secno = GET_SEC_FROM_SEG(sbi, p.min_segno);
 			if (gc_type == FG_GC)
@@ -1016,6 +1138,9 @@ static int gc_data_segment(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	int phase = 0;
 	int submitted = 0;
 
+/** comment by hy 2020-09-10
+ * # 一步是根据segno获取这个segment里面的第一个block的地址
+ */
 	start_addr = START_BLOCK(sbi, segno);
 
 next_step:
@@ -1027,6 +1152,7 @@ next_step:
 		struct node_info dni; /* dnode info for the data */
 		unsigned int ofs_in_node, nofs;
 		block_t start_bidx;
+
 		nid_t nid = le32_to_cpu(entry->nid);
 
 		/*
@@ -1042,28 +1168,54 @@ next_step:
 		if (check_valid_map(sbi, segno, off) == 0)
 			continue;
 
+
+
 		if (phase == 0) {
 			f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
 							META_NAT, true);
 			continue;
 		}
 
+/** comment by hy 2020-09-10
+ * # 根据entry记录的nid，
+     通过ra_node_page函数可以将这个nid对应的node page读入到内存当中
+ */
 		if (phase == 1) {
+/** comment by hy 2020-09-10
+ * # 预读node page
+ */
 			f2fs_ra_node_page(sbi, nid);
 			continue;
 		}
+/** comment by hy 2020-09-10
+ * # 根据start_addr以及entry，通过check_dnode函数
+     找到了对应的struct node_info *dni
+     它记录这个block是属于哪一个inode(inode no)
+     然后将对应的inode page读入到内存当中
+ */
 
 		/* Get an inode by ino with checking validity */
 		if (!is_alive(sbi, entry, &dni, start_addr + off, &nofs))
 			continue;
 
 		if (phase == 2) {
+/** comment by hy 2020-09-10
+ * # 预读inode page
+ */
 			f2fs_ra_node_page(sbi, dni.ino);
 			continue;
 		}
 
 		ofs_in_node = le16_to_cpu(entry->ofs_in_node);
 
+/** comment by hy 2020-09-10
+ * # 通过entry->ofs_in_node获取到当前block属于node的第几个block
+     然后通过start_bidx_of_node函数获取到当前block是属于
+     从inode page开始的第几个block
+     其实本质上就是start_bidx + ofs_in_node = page->index的值
+     然后根据page->index找到对应的data page，读入到内存中以便后续使用
+     最后就是将该inode加入到上面提及过的inode list中
+ */
 		if (phase == 3) {
 			inode = f2fs_iget(sb, dni.ino);
 			if (IS_ERR(inode) || is_bad_inode(inode)) {
@@ -1093,6 +1245,9 @@ next_step:
 				continue;
 			}
 
+/** comment by hy 2020-09-10
+ * # 预读data page
+ */
 			data_page = f2fs_get_read_data_page(inode,
 						start_bidx, REQ_RAHEAD, true);
 			up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
@@ -1102,10 +1257,18 @@ next_step:
 			}
 
 			f2fs_put_page(data_page, 0);
+/** comment by hy 2020-09-10
+ * # 加入到inode list
+ */
 			add_gc_inode(gc_list, inode);
 			continue;
 		}
 
+/** comment by hy 2020-09-10
+ * # 从inode list中取出一个inode
+     然后根据start_bidx + ofs_in_node找到对应的page->index
+     然后通过move_data_page函数，将数据写入到其他segment中
+ */
 		/* phase 4 */
 		inode = find_gc_inode(gc_list, dni.ino);
 		if (inode) {
@@ -1130,6 +1293,9 @@ next_step:
 
 			start_bidx = f2fs_start_bidx_of_node(nofs, inode)
 								+ ofs_in_node;
+/** comment by hy 2020-09-10
+ * # 迁移数据
+ */
 			if (f2fs_post_read_required(inode))
 				err = move_data_block(inode, start_bidx,
 							gc_type, segno, off);
@@ -1193,6 +1359,9 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 
 	/* reference all summary page */
 	while (segno < end_segno) {
+/** comment by hy 2020-09-10
+ * # 根据segno获取f2fs_summary_block
+ */
 		sum_page = f2fs_get_sum_page(sbi, segno++);
 		if (IS_ERR(sum_page)) {
 			int err = PTR_ERR(sum_page);
@@ -1226,6 +1395,9 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 		if (!PageUptodate(sum_page) || unlikely(f2fs_cp_error(sbi)))
 			goto skip;
 
+/** comment by hy 2020-09-10
+ * # 根据类型迁移数据
+ */
 		sum = page_address(sum_page);
 		if (type != GET_SUM_TYPE((&sum->footer))) {
 			f2fs_err(sbi, "Inconsistent segment (%u) type [%d, %d] in SSA and SIT",
@@ -1303,6 +1475,11 @@ int f2fs_gc(struct f2fs_sb_info *sbi, bool sync,
 	sbi->skipped_gc_rwsem = 0;
 	first_skipped = last_skipped;
 gc_more:
+/** comment by hy 2020-09-10
+ * # 挑选出合适的segment，通过segno段号的方式返回
+     注意ret现在的值是-1，因此如果f2fs_gc返回不是0的结果
+     意味着找不出适合的victim segment，对应了上面300秒等待时间的分析
+ */
 	if (unlikely(!(sbi->sb->s_flags & SB_ACTIVE))) {
 		ret = -EINVAL;
 		goto stop;
@@ -1333,11 +1510,23 @@ gc_more:
 		ret = -EINVAL;
 		goto stop;
 	}
+/** comment by hy 2020-09-10
+ * # 挑选出合适的segment，通过segno段号的方式返回
+     f2fs_gc返回不是0的结果，意味着找不出适合的victim segment
+     对应了上面300秒等待时间
+ */
 	if (!__get_victim(sbi, &segno, gc_type)) {
 		ret = -ENODATA;
 		goto stop;
 	}
 
+/** comment by hy 2020-09-10
+ * # 进行gc的主要操作
+     根据入参的段号segno找到对应的segment
+     然后将整个segment读取出来，通过异地更新的方式写入迁移到其他segment中
+     被gc的segment会变为一个全新的segment进而可以被系统重新使用
+     通过f2fs_summary_block结构根据物理地址找到对应的inode
+ */
 	seg_freed = do_garbage_collect(sbi, segno, &gc_list, gc_type);
 	if (gc_type == FG_GC && seg_freed == sbi->segs_per_sec)
 		sec_freed++;

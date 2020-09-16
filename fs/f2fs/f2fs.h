@@ -1420,6 +1420,9 @@ struct f2fs_sb_info {
 	struct f2fs_sm_info *sm_info;		/* segment manager */
 
 	/* for bio operations */
+/** comment by hy 2020-09-10
+ * # NR_PAGE_TYPE表示HOW/WARM/COLD不同类型的数据
+ */
 	struct f2fs_bio_info *write_io[NR_PAGE_TYPE];	/* for write bios */
 	/* keep migration IO order for LFS mode */
 	struct rw_semaphore io_order_lock;
@@ -2501,6 +2504,10 @@ static inline int offset_in_addr(struct f2fs_inode *i)
 
 static inline __le32 *blkaddr_in_node(struct f2fs_node *node)
 {
+/** comment by hy 2020-09-09
+ * # RAW_IS_INODE判断当前node是属于f2fs_inode还是f2fs_node
+     然后返回物理地址数组指针
+ */
 	return RAW_IS_INODE(node) ? node->i.i_addr : node->dn.addr;
 }
 

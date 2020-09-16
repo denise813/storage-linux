@@ -2852,6 +2852,9 @@ static int __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 {
 	struct curseg_info *curseg = CURSEG_I(sbi, CURSEG_HOT_DATA);
 	struct f2fs_journal *journal = curseg->journal;
+/** comment by hy 2020-09-10
+ * # 根据set number找到对应f2fs_nat_block
+ */
 	nid_t start_nid = set->set * NAT_ENTRY_PER_BLOCK;
 	bool to_journal = true;
 	struct f2fs_nat_block *nat_blk;
@@ -2863,6 +2866,9 @@ static int __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 	 * #1, flush nat entries to journal in current hot data summary block.
 	 * #2, flush nat entries to nat page.
 	 */
+/** comment by hy 2020-09-10
+ * # __has_cursum_space 当curseg的journal空间不够了，就刷写到磁盘中
+ */
 	if (enabled_nat_bits(sbi, cpc) ||
 		!__has_cursum_space(journal, set->entry_cnt, NAT_JOURNAL))
 		to_journal = false;
@@ -2870,6 +2876,9 @@ static int __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 	if (to_journal) {
 		down_write(&curseg->journal_rwsem);
 	} else {
+/** comment by hy 2020-09-10
+ * # 根据nid找到管理这个nid的f2fs_nat_block
+ */
 		page = get_next_nat_page(sbi, start_nid);
 		if (IS_ERR(page))
 			return PTR_ERR(page);
@@ -2879,6 +2888,10 @@ static int __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 	}
 
 	/* flush dirty nats in nat entry set */
+/** comment by hy 2020-09-10
+ * # 遍历所有的nat_entry
+     nat_entry只存在于内存当中，具体在磁盘保存的是f2fs_entry_block
+ */
 	list_for_each_entry_safe(ne, cur, &set->entry_list, list) {
 		struct f2fs_nat_entry *raw_ne;
 		nid_t nid = nat_get_nid(ne);
@@ -2887,21 +2900,48 @@ static int __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 		f2fs_bug_on(sbi, nat_get_blkaddr(ne) == NEW_ADDR);
 
 		if (to_journal) {
+/** comment by hy 2020-09-10
+ * # 搜索当前的journal中nid所在的位置
+ */
 			offset = f2fs_lookup_journal_in_cursum(journal,
 							NAT_JOURNAL, nid, 1);
 			f2fs_bug_on(sbi, offset < 0);
+/** comment by hy 2020-09-10
+ * # 从journal中取出f2fs_nat_entry的信息
+ */
 			raw_ne = &nat_in_journal(journal, offset);
+/** comment by hy 2020-09-10
+ * # 更新journal的nid
+ */
 			nid_in_journal(journal, offset) = cpu_to_le32(nid);
 		} else {
+/** comment by hy 2020-09-10
+ * # 拿到nid对应的nat_entry地址，下面开始填数据
+ */
 			raw_ne = &nat_blk->entries[nid - start_nid];
 		}
+/** comment by hy 2020-09-10
+ * # 将node info的信息更新到journal中后者磁盘中
+ */
 		raw_nat_from_node_info(raw_ne, &ne->ni);
+/** comment by hy 2020-09-10
+ * # 清除需要CP的标志
+ */
 		nat_reset_flag(ne);
+/** comment by hy 2020-09-10
+ * # 从dirty list清除处理后的entry
+ */
 		__clear_nat_cache_dirty(NM_I(sbi), set, ne);
+/** comment by hy 2020-09-10
+ * # 如果对应nid已经是被无效化了，则释放
+ */
 		if (nat_get_blkaddr(ne) == NULL_ADDR) {
 			add_free_nid(sbi, nid, false, true);
 		} else {
 			spin_lock(&NM_I(sbi)->nid_list_lock);
+/** comment by hy 2020-09-10
+ * # 更新可用的nat的bitmap
+ */
 			update_free_nid_bitmap(sbi, nid, false, false);
 			spin_unlock(&NM_I(sbi)->nid_list_lock);
 		}
@@ -2958,6 +2998,11 @@ int f2fs_flush_nat_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 		!__has_cursum_space(journal, nm_i->dirty_nat_cnt, NAT_JOURNAL))
 		remove_nats_in_journal(sbi);
 
+/** comment by hy 2020-09-10
+ * #  __gang_lookup_nat_set 这个函数就是从radix tree读取set_idx开始，
+ * 连续读取SETVEC_SIZE这么多个nat_entry_set，保存在setvec中
+ * 然后按照一定条件，通过__adjust_nat_entry_set函数加入到LIST_HEAD(sets)链表中
+ */
 	while ((found = __gang_lookup_nat_set(nm_i,
 					set_idx, SETVEC_SIZE, setvec))) {
 		unsigned idx;
@@ -2968,7 +3013,24 @@ int f2fs_flush_nat_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	}
 
 	/* flush dirty nats in nat entry set */
+/** comment by hy 2020-09-10
+ * # 遍历这个list所有的nat_entry_set，然后写入到curseg->journal中
+ */
 	list_for_each_entry_safe(set, tmp, &sets, set_list) {
+/** comment by hy 2020-09-10
+ * # 有两种回写的方式
+     第一种是写入到curseg的journal中，第二种是回写到nat block中
+     第一种写入方式通常是由于curseg有足够的journal的情况下的写入
+     首先遍历nat_entry_set中的所有nat_entry
+     然后根据nid找到curseg->journal中对应的nat_entry的位置
+     跟着将被遍历的nat_entry的值赋予给curseg->journal的nat_entry
+     通过raw_nat_from_node_info完成curseg的nat_entry的更新。
+
+    第二种写入方式在curseg没有足够的journal的时候触发
+    首先根据nid找到NAT区域的对应的f2fs_nat_block
+    然后通过get_next_nat_page读取出来
+    然后通过raw_nat_from_node_info进行更新
+ */
 		err = __flush_nat_entry_set(sbi, set, cpc);
 		if (err)
 			break;

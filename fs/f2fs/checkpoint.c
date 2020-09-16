@@ -1398,6 +1398,12 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	/* start to update checkpoint, cp ver is already updated previously */
 	ckpt->elapsed_time = cpu_to_le64(get_mtime(sbi, true));
 	ckpt->free_segment_count = cpu_to_le32(free_segments(sbi));
+/** comment by hy 2020-09-10
+ * # 根据curseg，修改f2fs_checkpoint结构的信息
+     元数据区域的f2fs_checkpoint结构的修改，
+     其实包括将curseg的当前segno，blkoff等写入到f2fs_checkpoint中
+     以便下次重启时可以根据这些信息，重建curseg
+ */
 	for (i = 0; i < NR_CURSEG_NODE_TYPE; i++) {
 		ckpt->cur_node_segno[i] =
 			cpu_to_le32(curseg_segno(sbi, i + CURSEG_HOT_NODE));
@@ -1416,6 +1422,24 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	}
 
 	/* 2 cp  + n data seg summary + orphan inode blocks */
+/** comment by hy 2020-09-10
+ * # 根据curseg，修改summary的信息
+     少于439的block(只修改了439个f2fs_summary)，
+     那么可以通过compacted回写方式进行回写，
+     即通过一个compacted summary block完成回写，
+     需要回写1个block。
+     大于439，少于439+584=1023个block，
+     那么可以通过compacted回写方式进行回写，
+     即可以通过compacted summary block加一个纯summary block的方式保存所有信息
+     需要回写2个block。
+     大于1023的情况下，即和normal summary block同样的回写情况，
+     那么就会使用normal summary block的回写方式完成回写，
+     即回写3个block。(因为大于1023情况下，
+     如果继续使用compacted回写，最差的情况下要回写4个block)
+     根据需要回写的summary的数目，返回需要写回的block的数目，返回值有1、2、3
+     compacted summary block被设计为通过1~2个block保存当前curseg所有的元信息
+     它的核心设计是将HOW WARM COLD DATA的元信息混合保存:
+ */
 	data_sum_blocks = f2fs_npages_for_summary_flush(sbi, false);
 	spin_lock_irqsave(&sbi->cp_lock, flags);
 	if (data_sum_blocks < NR_CURSEG_DATA_TYPE)
@@ -1428,6 +1452,11 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	ckpt->cp_pack_start_sum = cpu_to_le32(1 + cp_payload_blks +
 			orphan_blocks);
 
+/** comment by hy 2020-09-10
+ * # node summaries的写回只有在启动和关闭F2FS的时候才会执行，
+ * 如果出现的宕机的情况下，就会失去了UMOUNT的标志，也会失去了所有的NODE SUMMARY
+ * F2FS会进行根据上次checkpoint的情况进行恢复
+ */
 	if (__remain_node_summaries(cpc->reason))
 		ckpt->cp_pack_total_block_count = cpu_to_le32(F2FS_CP_PACKS+
 				cp_payload_blks + data_sum_blocks +
@@ -1477,6 +1506,12 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 		start_blk += orphan_blocks;
 	}
 
+/** comment by hy 2020-09-10
+ * # 将node summary以及里面的journal写入磁盘
+     然后将summary写入磁盘
+     会判断一下是否设置了CP_COMPACT_SUM_FLAG标志
+     采取不同的方法写入磁盘
+ */
 	f2fs_write_data_summaries(sbi, start_blk);
 	start_blk += data_sum_blocks;
 
@@ -1510,6 +1545,9 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 		return err;
 
 	/* barrier and flush checkpoint cp pack 2 page if it can */
+/** comment by hy 2020-09-10
+ * # 将修改后的checkpoint区域的数据提交到设备，对磁盘的元数据进行更新
+ */
 	commit_checkpoint(sbi, ckpt, start_blk);
 	f2fs_wait_on_all_pages(sbi, F2FS_WB_CP_DATA);
 
@@ -1576,12 +1614,18 @@ int f2fs_write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 
 	trace_f2fs_write_checkpoint(sbi->sb, cpc->reason, "start block_ops");
 
+/** comment by hy 2020-09-10
+ * # 将文件系统的所有操作都停止
+ */
 	err = block_operations(sbi);
 	if (err)
 		goto out;
 
 	trace_f2fs_write_checkpoint(sbi->sb, cpc->reason, "finish block_ops");
 
+/** comment by hy 2020-09-10
+ * # 将暂存的所有BIO刷写到磁盘
+ */
 	f2fs_flush_merged_writes(sbi);
 
 	/* this is the case of multiple fstrims without any changes */
@@ -1606,22 +1650,44 @@ int f2fs_write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	 * Increase the version number so that
 	 * SIT entries and seg summaries are written at correct place
 	 */
+/** comment by hy 2020-09-10
+ * # 获取当前CP的version
+ */
 	ckpt_ver = cur_cp_version(ckpt);
+/** comment by hy 2020-09-10
+ * # 给当前CP version加1
+ */
 	ckpt->checkpoint_ver = cpu_to_le64(++ckpt_ver);
 
 	/* write cached NAT/SIT entries to NAT/SIT area */
+/** comment by hy 2020-09-10
+ * # 更新元数据的NAT区域
+     刷写所有nat entries到磁盘
+ */
 	err = f2fs_flush_nat_entries(sbi, cpc);
 	if (err)
 		goto stop;
 
+/** comment by hy 2020-09-10
+ * # 更新元数据的SIT区域
+     刷写所有sit entries到磁盘，处理dirty prefree segments
+ */
 	f2fs_flush_sit_entries(sbi, cpc);
 
+/** comment by hy 2020-09-10
+ * # 更新元数据的Checkpoint区域以及Summary区域
+     checkpoint核心流程
+     f2fs_clear_prefree_segments 清除dirty prefree segments的dirty标记
+ */
 	err = do_checkpoint(sbi, cpc);
 	if (err)
 		f2fs_release_discard_addrs(sbi);
 	else
 		f2fs_clear_prefree_segments(sbi, cpc);
 stop:
+/** comment by hy 2020-09-10
+ * # 恢复文件系统的操作
+ */
 	unblock_operations(sbi);
 	stat_inc_cp_count(sbi->stat_info);
 
@@ -1629,6 +1695,9 @@ stop:
 		f2fs_notice(sbi, "checkpoint: version = %llx", ckpt_ver);
 
 	/* update CP_TIME to trigger checkpoint periodically */
+/** comment by hy 2020-09-10
+ * # 更新CP的时间
+ */
 	f2fs_update_time(sbi, CP_TIME);
 	trace_f2fs_write_checkpoint(sbi->sb, cpc->reason, "finish checkpoint");
 out:
