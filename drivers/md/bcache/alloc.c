@@ -195,12 +195,12 @@ static void invalidate_buckets_lru(struct cache *ca)
 		if (!bch_can_invalidate_bucket(ca, b))
 			continue;
 
-		if (!heap_full(&ca->heap))
-			heap_add(&ca->heap, b, bucket_max_cmp);
 /** comment by hy 2020-09-16
- * # 加bucket加入到heap中 
+ * # 加bucket加入到heap中
      按prio从小到大排序heap
  */
+		if (!heap_full(&ca->heap))
+			heap_add(&ca->heap, b, bucket_max_cmp);
 		else if (bucket_max_cmp(b, heap_peek(&ca->heap))) {
 			ca->heap.data[0] = b;
 			heap_sift(&ca->heap, 0, bucket_max_cmp);
@@ -216,7 +216,7 @@ static void invalidate_buckets_lru(struct cache *ca)
  */
 	while (!fifo_full(&ca->free_inc)) {
 /** comment by hy 2020-09-16
- * # free_inc未满，则wake_up_gc
+ * # free_inc未满，则 wake_up_gc
  */
 		if (!heap_pop(&ca->heap, b, bucket_min_cmp)) {
 			/*
@@ -224,6 +224,9 @@ static void invalidate_buckets_lru(struct cache *ca)
 			 * multiple times when it can't do anything
 			 */
 			ca->invalidate_needs_gc = 1;
+/** comment by hy 2020-10-03
+ * # 唤醒垃圾回收线程 bch_gc_thread
+ */
 			wake_up_gc(ca->set);
 			return;
 		}
@@ -390,6 +393,7 @@ retry_invalidate:
 			       !ca->invalidate_needs_gc);
 /** comment by hy 2020-09-16
  * # 三种invalidate正在使用的bucket的方式，fifo, lru和randorm
+     按照关系压入栈中
  */
 		invalidate_buckets(ca);
 
@@ -683,7 +687,8 @@ bool bch_alloc_sectors(struct cache_set *c,
 	spin_lock(&c->data_bucket_lock);
 
 /** comment by hy 2020-09-16
- * # 从bucket中分配空间
+ * # 寻找合适的bucket
+     从bucket中分配空间
  */
 	while (!(b = pick_data_bucket(c, k, write_point, &alloc.key))) {
 		unsigned int watermark = write_prio

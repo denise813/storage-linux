@@ -117,11 +117,20 @@ static inline void bch_writeback_add(struct cached_dev *dc)
 	if (!atomic_read(&dc->has_dirty) &&
 	    !atomic_xchg(&dc->has_dirty, 1)) {
 		if (BDEV_STATE(&dc->sb) != BDEV_STATE_DIRTY) {
+/** comment by hy 2020-09-17
+ * # 置脏dc
+ */
 			SET_BDEV_STATE(&dc->sb, BDEV_STATE_DIRTY);
 			/* XXX: should do this synchronously */
+/** comment by hy 2020-09-17
+ * # 同步更新device super
+ */
 			bch_write_bdev_super(dc, NULL);
 		}
 
+/** comment by hy 2020-09-17
+ * 里面唤醒writeback线程
+ */
 		bch_writeback_queue(dc);
 	}
 }

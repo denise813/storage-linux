@@ -270,6 +270,9 @@ struct bcache_device {
 	struct cache_set	*c;
 	unsigned int		id;
 #define BCACHEDEVNAME_SIZE	12
+/** comment by hy 2020-10-09
+ * # 拼凑为 id信息,这里可以进行修改
+ */
 	char			name[BCACHEDEVNAME_SIZE];
 
 	struct gendisk		*disk;
@@ -938,6 +941,9 @@ static inline void wake_up_allocators(struct cache_set *c)
 		wake_up_process(ca->alloc_thread);
 }
 
+/** comment by hy 2020-10-20
+ * # 在这里修改不使用系统默认的 不修改 generic_make_request 这个比较难
+ */
 static inline void closure_bio_submit(struct cache_set *c,
 				      struct bio *bio,
 				      struct closure *cl)
@@ -948,6 +954,7 @@ static inline void closure_bio_submit(struct cache_set *c,
 		bio_endio(bio);
 		return;
 	}
+
 	generic_make_request(bio);
 }
 

@@ -730,8 +730,13 @@ static void bcache_device_link(struct bcache_device *d, struct cache_set *c,
 	for_each_cache(ca, d->c, i)
 		bd_link_disk_holder(ca->bdev, d->disk);
 
+/** comment by hy 2020-10-09
+ * # 这里的id,修改可以使用disk->name
+ */
+/* modify begin by hy, 2020-10-09, BugId:123 原因: 修改为对应的后端设备名称 */
 	snprintf(d->name, BCACHEDEVNAME_SIZE,
-		 "%s%u", name, d->id);
+		 "%s%s", name, d->disk->disk_name);
+/* modify end by hy, 2020-10-09 */
 
 	ret = sysfs_create_link(&d->kobj, &c->kobj, "cache");
 	if (ret < 0)
@@ -870,13 +875,21 @@ static int bcache_device_init(struct bcache_device *d, unsigned int block_size,
 		goto err;
 
 	set_capacity(d->disk, sectors);
-	snprintf(d->disk->disk_name, DISK_NAME_LEN, "bcache%i", idx);
+/** comment by hy 2020-10-09
+ * # 将设备名称进行修改
+ */
+/* modify begin by hy, 2020-10-09, BugId:123 原因: 修改设备名称为后端设备名称 */
+	snprintf(d->disk->disk_name, DISK_NAME_LEN, "bcache%s", cached_bdev->bd_disk->disk_name);
+/* modify end by hy, 2020-10-09 */
 
 	d->disk->major		= bcache_major;
 	d->disk->first_minor	= idx_to_first_minor(idx);
 	d->disk->fops		= &bcache_ops;
 	d->disk->private_data	= d;
 
+/** comment by hy 2020-09-17
+ * # 生成处理函数
+ */
 	q = blk_alloc_queue(make_request_fn, NUMA_NO_NODE);
 	if (!q)
 		return -ENOMEM;
@@ -1227,6 +1240,9 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c,
 		bch_uuid_write(c);
 	}
 
+/** comment by hy 2020-10-13
+ * # 
+ */
 	bcache_device_attach(&dc->disk, c, u - c->uuids);
 	list_move(&dc->list, &c->cached_devs);
 	calc_cached_dev_sectors(c);
@@ -1239,6 +1255,9 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c,
 	refcount_set(&dc->count, 1);
 
 	/* Block writeback thread, but spawn it */
+/** comment by hy 2020-09-17
+ * # 启动writeback线程
+ */
 	down_write(&dc->writeback_lock);
 	if (bch_cached_dev_writeback_start(dc)) {
 		up_write(&dc->writeback_lock);
@@ -1372,7 +1391,7 @@ static int cached_dev_init(struct cached_dev *dc, unsigned int block_size)
 			q->limits.raid_partial_stripes_expensive;
 
 /** comment by hy 2020-09-14
- * # 后端设备请求
+ * # 初始化dc 后端设备请求,这里生成 id
  */
 	ret = bcache_device_init(&dc->disk, block_size,
 			 dc->bdev->bd_part->nr_sects - dc->sb.data_offset,
@@ -1390,7 +1409,13 @@ static int cached_dev_init(struct cached_dev *dc, unsigned int block_size)
 	/* default to auto */
 	dc->stop_when_cache_set_failed = BCH_CACHED_DEV_STOP_AUTO;
 
+/** comment by hy 2020-09-17
+ * # 初始化request
+ */
 	bch_cached_dev_request_init(dc);
+/** comment by hy 2020-09-17
+ * # 初始化writeback
+ */
 	bch_cached_dev_writeback_init(dc);
 	return 0;
 }
@@ -1412,7 +1437,7 @@ static int register_bdev(struct cache_sb *sb, struct cache_sb_disk *sb_disk,
 	dc->sb_disk = sb_disk;
 
 /** comment by hy 2020-09-14
- * # 生成后端请求处理
+ * # 初始化dc 生成后端请求处理,这里调用生成 id
  */
 	if (cached_dev_init(dc, sb->block_size << 9))
 		goto err;
@@ -1426,8 +1451,14 @@ static int register_bdev(struct cache_sb *sb, struct cache_sb_disk *sb_disk,
 
 	pr_info("registered backing device %s\n", dc->backing_dev_name);
 
+/** comment by hy 2020-09-17
+ * # 加入未缓存设备表
+ */
 	list_add(&dc->list, &uncached_devices);
 	/* attach to a matched cache set if it exists */
+/** comment by hy 2020-09-17
+ * # bch_cached_dev_attach 加入已有的cache set,并启动writeback线程
+ */
 	list_for_each_entry(c, &bch_cache_sets, list)
 		bch_cached_dev_attach(dc, c, NULL);
 
@@ -1871,7 +1902,9 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
  * # 这个大条件 执行好多东西
      bch_journal_alloc journal 初始化
      bch_btree_cache_alloc 建立btree node的分配缓存管理结构
-     bch_open_buckets_alloc 初始化c->data_buckets 一共为6个
+         先分配多个 btree 来建立索引
+     bch_open_buckets_alloc 初始化c->data_buckets 一共为128个
+         即先初始化128个桶
      bch_bset_sort_state_init 用于bset中的sort操作
  */
 	if (!(c->devices = kcalloc(c->nr_uuids, sizeof(void *), GFP_KERNEL)) ||
@@ -1891,6 +1924,9 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	    bch_bset_sort_state_init(&c->sort, ilog2(c->btree_pages)))
 		goto err;
 
+/** comment by hy 2020-10-03
+ * # 监控测试
+ */
 	c->congested_read_threshold_us	= 2000;
 	c->congested_write_threshold_us	= 20000;
 	c->error_limit	= DEFAULT_IO_ERROR_LIMIT;
@@ -1915,10 +1951,19 @@ static int run_cache_set(struct cache_set *c)
 
 	closure_init_stack(&cl);
 
+/** comment by hy 2020-10-09
+ * # 从集合中找到对应的buck 数量,比方 一个缓存集合给多个设备使用
+ */
 	for_each_cache(ca, c, i)
 		c->nbuckets += ca->sb.nbuckets;
+/** comment by hy 2020-10-09
+ * # 16 是闪存盘的一个设计参数
+ */
 	set_gc_sectors(c);
 
+/** comment by hy 2020-10-09
+ * # 加入sync操作,进行日志回放
+ */
 	if (CACHE_SYNC(&c->sb)) {
 		struct bkey *k;
 		struct jset *j;
@@ -1939,6 +1984,9 @@ static int run_cache_set(struct cache_set *c)
 		j = &list_entry(journal.prev, struct journal_replay, list)->j;
 
 		err = "IO error reading priorities";
+/** comment by hy 2020-10-09
+ * # 读取时间
+ */
 		for_each_cache(ca, c, i) {
 			if (prio_read(ca, j->prio_bucket[ca->sb.nr_this_dev]))
 				goto err;
@@ -1957,6 +2005,9 @@ static int run_cache_set(struct cache_set *c)
 			goto err;
 
 		err = "error reading btree root";
+/** comment by hy 2020-10-09
+ * # 获取 索引 btree
+ */
 		c->root = bch_btree_node_get(c, NULL, k,
 					     j->btree_level,
 					     true, NULL);
@@ -1966,11 +2017,17 @@ static int run_cache_set(struct cache_set *c)
 		list_del_init(&c->root->list);
 		rw_unlock(true, c->root);
 
+/** comment by hy 2020-10-09
+ * # 获取uuid
+ */
 		err = uuid_read(c, j, &cl);
 		if (err)
 			goto err;
 
 		err = "error in recovery";
+/** comment by hy 2020-10-09
+ * # 启动检查线程
+ */
 		if (bch_btree_check(c))
 			goto err;
 
@@ -1986,6 +2043,9 @@ static int run_cache_set(struct cache_set *c)
 		bch_journal_next(&c->journal);
 
 		err = "error starting allocator thread";
+/** comment by hy 2020-10-03
+ * # 启动 c处理操作,如bucket
+ */
 		for_each_cache(ca, c, i)
 			if (bch_cache_allocator_start(ca))
 				goto err;
@@ -2036,6 +2096,9 @@ static int run_cache_set(struct cache_set *c)
 			goto err;
 
 		err = "cannot allocate new btree root";
+/** comment by hy 2020-10-09
+ * # 这里加载 btree
+ */
 		c->root = __bch_btree_node_alloc(c, NULL, 0, true, NULL);
 		if (IS_ERR_OR_NULL(c->root))
 			goto err;
@@ -2112,6 +2175,9 @@ static const char *register_cache_set(struct cache *ca)
 	const char *err = "cannot allocate memory";
 	struct cache_set *c;
 
+/** comment by hy 2020-09-17
+ * # 查找是否已经加入cache set表
+ */
 	list_for_each_entry(c, &bch_cache_sets, list)
 		if (!memcmp(c->sb.set_uuid, ca->sb.set_uuid, 16)) {
 			if (c->cache[ca->sb.nr_this_dev])
@@ -2127,8 +2193,9 @@ static const char *register_cache_set(struct cache *ca)
 		}
 
 /** comment by hy 2020-09-16
- * # 从super block中获取bucket size, block_size等参数
-       sb 用于访问cache设备的超级块
+ * # 申请 cache set 组并出使化，各种队列，bucket 组 初始化
+     从super block中获取bucket size, block_size等参数
+     sb 用于访问cache设备的超级块
  */
 	c = bch_cache_set_alloc(&ca->sb);
 	if (!c)
@@ -2144,6 +2211,9 @@ static const char *register_cache_set(struct cache *ca)
 
 	bch_debug_init_cache_set(c);
 
+/** comment by hy 2020-09-17
+ * # 加入cache set表
+ */
 	list_add(&c->list, &bch_cache_sets);
 found:
 	sprintf(buf, "cache%i", ca->sb.nr_this_dev);
@@ -2160,6 +2230,9 @@ found:
 	}
 
 	kobject_get(&ca->kobj);
+/** comment by hy 2020-09-17
+ * # 建立ca与 cache set联系
+ */
 	ca->set = c;
 	ca->set->cache[ca->sb.nr_this_dev] = ca;
 	c->cache_by_alloc[c->caches_loaded++] = ca;
@@ -2167,7 +2240,7 @@ found:
 	if (c->caches_loaded == c->sb.nr_in_set) {
 		err = "failed to run cache set";
 /** comment by hy 2020-09-16
- * # cache 与设备进行关联
+ * # cache 与设备进行关联,已经对应的bucket 处理线程
  */
 		if (run_cache_set(c) < 0)
 			goto err;
@@ -2373,6 +2446,7 @@ static int register_cache(struct cache_sb *sb, struct cache_sb_disk *sb_disk,
 /** comment by hy 2020-09-14
  * # 注册cache设备
      cache 设备
+     建立 cache 与 cache set 关系
      每个设备 通过 bch_cache_allocator_start 函数绑定
      线程 bch_allocator_thread 用于分配 bucket
  */
@@ -2404,6 +2478,9 @@ static ssize_t bch_pending_bdevs_cleanup(struct kobject *k,
 					 struct kobj_attribute *attr,
 					 const char *buffer, size_t size);
 
+/** comment by hy 2020-10-03
+ * # 命令操作
+ */
 kobj_attribute_write(register,		register_bcache);
 kobj_attribute_write(register_quiet,	register_bcache);
 kobj_attribute_write(register_async,	register_bcache);
@@ -2553,6 +2630,9 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 
 	ret = -EINVAL;
 	err = "failed to open device";
+/** comment by hy 2020-09-17
+ * # 根据磁盘路径获取bde
+ */
 	bdev = blkdev_get_by_path(strim(path),
 				  FMODE_READ|FMODE_WRITE|FMODE_EXCL,
 				  sb);
@@ -2578,7 +2658,8 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 		goto out_blkdev_put;
 
 /** comment by hy 2020-09-11
- * # 加载 subblock
+ * # 读取设备超级块,大部分数据在make-bcache时写入
+     加载 subblock
  */
 	err = read_super(sb, bdev, &sb_disk);
 	if (err)
@@ -2600,12 +2681,21 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 		args->sb	= sb;
 		args->sb_disk	= sb_disk;
 		args->bdev	= bdev;
+/** comment by hy 2020-10-03
+ * # 注册 bucket 处理线程
+ */
 		register_device_aync(args);
 		/* No wait and returns to user space */
 		goto async_done;
 	}
 
+/** comment by hy 2020-09-17
+ * # 后端设备处理
+ */
 	if (SB_IS_BDEV(sb)) {
+/** comment by hy 2020-09-17
+ * # 申请一个对应后端设备的内存结构dc
+ */
 		struct cached_dev *dc = kzalloc(sizeof(*dc), GFP_KERNEL);
 
 		if (!dc)
@@ -2613,7 +2703,7 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 
 		mutex_lock(&bch_register_lock);
 /** comment by hy 2020-09-14
- * # 注册后端设备
+ * # 注册后端设备 最终体现为dc = /dev/bcachex
  */
 		ret = register_bdev(sb, sb_disk, bdev, dc);
 		mutex_unlock(&bch_register_lock);
@@ -2621,6 +2711,9 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 		if (ret < 0)
 			goto out_free_sb;
 	} else {
+/** comment by hy 2020-09-17
+ * # 申请一个对应缓存设备的内存结构ca
+ */
 		struct cache *ca = kzalloc(sizeof(*ca), GFP_KERNEL);
 
 		if (!ca)
@@ -2628,7 +2721,7 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 
 		/* blkdev_put() will be called in bch_cache_release() */
 /** comment by hy 2020-09-14
- * # 这个地方缓存注册设备
+ * # 注册缓存设备
  */
 		if (register_cache(sb, sb_disk, bdev, ca) != 0)
 			goto out_free_sb;

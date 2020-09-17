@@ -423,6 +423,9 @@ int blk_queue_enter(struct request_queue *q, blk_mq_req_flags_t flags)
 			 * responsible for ensuring that that counter is
 			 * globally visible before the queue is unfrozen.
 			 */
+/** comment by hy 2020-10-20
+ * # 抢占模式为真
+ */
 			if (pm || !blk_queue_pm_only(q)) {
 				success = true;
 			} else {
@@ -1147,12 +1150,19 @@ blk_qc_t generic_make_request(struct bio *bio)
 	do {
 		struct request_queue *q = bio->bi_disk->queue;
 
+/** comment by hy 2020-10-20
+ * # 非抢占模式阻塞后面的操作,抢占模式为真 即 == 0
+      抢到了就执行
+ */
 		if (likely(bio_queue_enter(bio) == 0)) {
 			struct bio_list lower, same;
 
 			/* Create a fresh bio_list for all subordinate requests */
 			bio_list_on_stack[1] = bio_list_on_stack[0];
 			bio_list_init(&bio_list_on_stack[0]);
+/** comment by hy 2020-10-20
+ * # 执行请求
+ */
 			ret = do_make_request(bio);
 
 			/* sort new bios into those for a lower level
@@ -1160,12 +1170,18 @@ blk_qc_t generic_make_request(struct bio *bio)
 			 */
 			bio_list_init(&lower);
 			bio_list_init(&same);
+/** comment by hy 2020-10-20
+ * # 多队列中已经执行到其他队列上了
+ */
 			while ((bio = bio_list_pop(&bio_list_on_stack[0])) != NULL)
 				if (q == bio->bi_disk->queue)
 					bio_list_add(&same, bio);
 				else
 					bio_list_add(&lower, bio);
 			/* now assemble so we handle the lowest level first */
+/** comment by hy 2020-10-20
+ * # 将请求合并到老队列上
+ */
 			bio_list_merge(&bio_list_on_stack[0], &lower);
 			bio_list_merge(&bio_list_on_stack[0], &same);
 			bio_list_merge(&bio_list_on_stack[0], &bio_list_on_stack[1]);

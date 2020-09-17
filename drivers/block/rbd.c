@@ -3642,6 +3642,9 @@ again:
 		struct rbd_obj_request *obj_req = img_req->obj_request;
 
 		rbd_img_request_destroy(img_req);
+/** comment by hy 2020-10-13
+ * # 
+ */
 		if (__rbd_obj_handle_request(obj_req, &result)) {
 			img_req = obj_req->img_request;
 			goto again;
@@ -4743,6 +4746,9 @@ static void rbd_queue_workfn(struct work_struct *work)
 	if (result)
 		goto err_img_request;
 
+/** comment by hy 2020-10-13
+ * # 
+ */
 	rbd_img_handle_request(img_request, 0);
 	return;
 
@@ -4790,6 +4796,9 @@ static blk_status_t rbd_queue_rq(struct blk_mq_hw_ctx *hctx,
 		rbd_assert(!rbd_is_snap(rbd_dev));
 	}
 
+/** comment by hy 2020-10-13
+ * # 操作函数
+ */
 	INIT_WORK(&img_req->work, rbd_queue_workfn);
 	queue_work(rbd_wq, &img_req->work);
 	return BLK_STS_OK;
@@ -4987,6 +4996,9 @@ static int rbd_init_disk(struct rbd_device *rbd_dev)
 	disk->private_data = rbd_dev;
 
 	memset(&rbd_dev->tag_set, 0, sizeof(rbd_dev->tag_set));
+/** comment by hy 2020-10-13
+ * # 构造操作方法
+ */
 	rbd_dev->tag_set.ops = &rbd_mq_ops;
 	rbd_dev->tag_set.queue_depth = rbd_dev->opts->queue_depth;
 	rbd_dev->tag_set.numa_node = NUMA_NO_NODE;
@@ -7112,6 +7124,9 @@ static ssize_t do_rbd_add(struct bus_type *bus,
 		rbd_dev->opts->alloc_size = rbd_dev->layout.object_size;
 	}
 
+/** comment by hy 2020-10-13
+ * # 构建队列请求操作
+ */
 	rc = rbd_dev_device_setup(rbd_dev);
 	if (rc)
 		goto err_out_image_probe;
@@ -7370,6 +7385,9 @@ static int __init rbd_init(void)
 		}
 	}
 
+/** comment by hy 2020-10-13
+ * # 通过sysfs 进行操作
+ */
 	rc = rbd_sysfs_init();
 	if (rc)
 		goto err_out_blkdev;

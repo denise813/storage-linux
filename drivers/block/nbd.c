@@ -1399,6 +1399,9 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 		config->flags = arg;
 		return 0;
 	case NBD_DO_IT:
+/** comment by hy 2020-10-13
+ * # io 操作
+ */
 		return nbd_start_device_ioctl(nbd, bdev);
 	case NBD_CLEAR_QUE:
 		/*
@@ -1437,6 +1440,9 @@ static int nbd_ioctl(struct block_device *bdev, fmode_t mode,
 	/* Don't allow ioctl operations on a nbd device that was created with
 	 * netlink, unless it's DISCONNECT or CLEAR_SOCK, which are fine.
 	 */
+/** comment by hy 2020-10-13
+ * # __nbd_ioctl 进行与用户态操作
+ */
 	if (!test_bit(NBD_RT_BOUND, &config->runtime_flags) ||
 	    (cmd == NBD_DISCONNECT || cmd == NBD_CLEAR_SOCK))
 		error = __nbd_ioctl(bdev, nbd, cmd, arg);
@@ -1741,6 +1747,9 @@ static int nbd_dev_add(int index)
 	INIT_LIST_HEAD(&nbd->list);
 	disk->major = NBD_MAJOR;
 	disk->first_minor = index << part_shift;
+/** comment by hy 2020-10-13
+ * # 操作方法,与客户端通信采用 ioctl = nbd_ioctl
+ */
 	disk->fops = &nbd_fops;
 	disk->private_data = nbd;
 	sprintf(disk->disk_name, "nbd%d", index);
@@ -2405,6 +2414,9 @@ static int __init nbd_init(void)
 	nbd_dbg_init();
 
 	mutex_lock(&nbd_index_mutex);
+/** comment by hy 2020-10-13
+ * # 添加设备
+ */
 	for (i = 0; i < nbds_max; i++)
 		nbd_dev_add(i);
 	mutex_unlock(&nbd_index_mutex);

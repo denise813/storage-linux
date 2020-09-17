@@ -347,6 +347,9 @@ err:
 void bch_btree_keys_init(struct btree_keys *b, const struct btree_keys_ops *ops,
 			 bool *expensive_debug_checks)
 {
+/** comment by hy 2020-10-09
+ * # 根据新创建tree 生成 bch_btree_keys_ops 或者 bch_extent_keys_ops
+ */
 	b->ops = ops;
 	b->expensive_debug_checks = expensive_debug_checks;
 	b->nsets = 0;

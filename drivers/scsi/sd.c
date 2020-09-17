@@ -3837,6 +3837,9 @@ static int __init init_sd(void)
 		goto err_out_ppool;
 	}
 
+/** comment by hy 2020-10-09
+ * # 表示 scsi 设备
+ */
 	err = scsi_register_driver(&sd_template.gendrv);
 	if (err)
 		goto err_out_driver;

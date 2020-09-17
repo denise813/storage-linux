@@ -2592,9 +2592,18 @@ static inline int f2fs_test_and_clear_bit(unsigned int nr, char *addr)
 
 static inline void f2fs_change_bit(unsigned int nr, char *addr)
 {
+/** comment by hy 2020-10-10
+ * # addr是bitmap的首地址，由于每一个bit表示的是一个block的信息
+ */
 	int mask;
 
+/** comment by hy 2020-10-10
+ * # 跳过8个字节，先让addr跳到属于这个block的那个字节去
+ */
 	addr += (nr >> 3);
+/** comment by hy 2020-10-10
+ * # 然后在这个自己中找，这个block到底是哪一个bi
+ */
 	mask = 1 << (7 - (nr & 0x07));
 	*addr ^= mask;
 }

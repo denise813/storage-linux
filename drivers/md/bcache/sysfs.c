@@ -417,7 +417,7 @@ STORE(__cached_dev)
 		v = -ENOENT;
 		list_for_each_entry(c, &bch_cache_sets, list) {
 /** comment by hy 2020-09-16
- * # 
+ * # 启动设备writeback后端线程
  */
 			v = bch_cached_dev_attach(dc, c, set_uuid);
 			if (!v)
@@ -483,6 +483,9 @@ STORE(bch_cached_dev)
 	return size;
 }
 
+/** comment by hy 2020-09-17
+ * # 出现在对应fs的bcache
+ */
 static struct attribute *bch_cached_dev_files[] = {
 	&sysfs_attach,
 	&sysfs_detach,
@@ -1150,6 +1153,9 @@ STORE(__bch_cache)
 }
 STORE_LOCKED(bch_cache)
 
+/** comment by hy 2020-09-17
+ * # 出现在对应fs的bcache 目录下
+ */
 static struct attribute *bch_cache_files[] = {
 	&sysfs_bucket_size,
 	&sysfs_block_size,

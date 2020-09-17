@@ -307,6 +307,9 @@ static void write_dirty_finish(struct closure *cl)
 				: &dc->disk.c->writeback_keys_done);
 	}
 
+/** comment by hy 2020-09-17
+ * # 从node中删除该bkey
+ */
 	bch_keybuf_del(&dc->writeback_keys, w);
 	up(&dc->in_flight);
 
@@ -360,18 +363,36 @@ static void write_dirty(struct closure *cl)
 	 */
 	if (KEY_DIRTY(&w->key)) {
 		dirty_init(w);
+/** comment by hy 2020-09-17
+ * # 设置写属性
+ */
 		bio_set_op_attrs(&io->bio, REQ_OP_WRITE, 0);
+/** comment by hy 2020-09-17
+ * # 起始片
+ */
 		io->bio.bi_iter.bi_sector = KEY_START(&w->key);
+/** comment by hy 2020-09-17
+ * # io对象为后端盘
+ */
 		bio_set_dev(&io->bio, io->dc->bdev);
+/** comment by hy 2020-09-17
+ * # 写完后把key置干净
+ */
 		io->bio.bi_end_io	= dirty_endio;
 
 		/* I/O request sent to backing device */
+/** comment by hy 2020-09-17
+ * # 发布写io
+ */
 		closure_bio_submit(io->dc->disk.c, &io->bio, cl);
 	}
 
 	atomic_set(&dc->writeback_sequence_next, next_sequence);
 	closure_wake_up(&dc->writeback_ordering_wait);
 
+/** comment by hy 2020-09-17
+ * # 写io完成后，调用write_dirty_finish
+ */
 	continue_at(cl, write_dirty_finish, io->dc->writeback_write_wq);
 }
 
@@ -392,8 +413,13 @@ static void read_dirty_submit(struct closure *cl)
 {
 	struct dirty_io *io = container_of(cl, struct dirty_io, cl);
 
+/** comment by hy 2020-09-17
+ * # 发出cache设备的读bio
+ */
 	closure_bio_submit(io->dc->disk.c, &io->bio, cl);
-
+/** comment by hy 2020-09-17
+ * # 该key的所有数据读出后，在writeback_write_wq执行write_dirty
+ */
 	continue_at(cl, write_dirty, io->dc->writeback_write_wq);
 }
 
@@ -415,9 +441,14 @@ static void read_dirty(struct cached_dev *dc)
 	 * XXX: if we error, background writeback just spins. Should use some
 	 * mempools.
 	 */
-
+/** comment by hy 2020-09-17
+ * # 依次取出writeback_keys列表的key
+ */
 	next = bch_keybuf_next(&dc->writeback_keys);
 
+/** comment by hy 2020-09-17
+ * # 把dc->writeback_keys中的bkeys 回刷到后端设备
+ */
 	while (!kthread_should_stop() &&
 	       !test_bit(CACHE_SET_IO_DISABLE, &dc->disk.c->flags) &&
 	       next) {
@@ -462,6 +493,9 @@ static void read_dirty(struct cached_dev *dc)
 		for (i = 0; i < nk; i++) {
 			w = keys[i];
 
+/** comment by hy 2020-09-17
+ * # 创建对应一个key的bio
+ */
 			io = kzalloc(sizeof(struct dirty_io) +
 				     sizeof(struct bio_vec) *
 				     DIV_ROUND_UP(KEY_SIZE(&w->key),
@@ -475,6 +509,9 @@ static void read_dirty(struct cached_dev *dc)
 			io->sequence    = sequence++;
 
 			dirty_init(w);
+/** comment by hy 2020-09-17
+ * # 从cache的读io
+ */
 			bio_set_op_attrs(&io->bio, REQ_OP_READ, 0);
 			io->bio.bi_iter.bi_sector = PTR_OFFSET(&w->key, 0);
 			bio_set_dev(&io->bio,
@@ -493,6 +530,9 @@ static void read_dirty(struct cached_dev *dc)
 			 * simultaneous number of writebacks; from here
 			 * everything happens asynchronously.
 			 */
+/** comment by hy 2020-09-17
+ * # 读出的脏数据io
+ */
 			closure_call(&io->cl, read_dirty_submit, NULL, &cl);
 		}
 
@@ -656,6 +696,9 @@ static bool refill_dirty(struct cached_dev *dc)
 	 * only scan up to where we initially started scanning from:
 	 */
 	buf->last_scanned = start;
+/** comment by hy 2020-09-17
+ * # 从cache的root(b+tree)树中，把对应该dc的脏bkey取出并加入dc->writeback_keys
+ */
 	bch_refill_keybuf(dc->disk.c, buf, &start_pos, dirty_pred);
 
 	return bkey_cmp(&buf->last_scanned, &start_pos) >= 0;
@@ -680,6 +723,9 @@ static int bch_writeback_thread(void *arg)
 		 * the writeback thread should sleep here and wait for others
 		 * to wake up it.
 		 */
+/** comment by hy 2020-09-17
+ * # 非脏或writebach未运行，则直接跳过
+ */
 		if (!test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) &&
 		    (!atomic_read(&dc->has_dirty) || !dc->writeback_running)) {
 			up_write(&dc->writeback_lock);
@@ -695,8 +741,14 @@ static int bch_writeback_thread(void *arg)
 		}
 		set_current_state(TASK_RUNNING);
 
+/** comment by hy 2020-09-17
+ * # 从cache的root(b+tree)树中，把对应该dc的脏bkey取出并加入dc->writeback_keys
+ */
 		searched_full_index = refill_dirty(dc);
 
+/** comment by hy 2020-09-17
+ * # 扫描整块磁盘也没发现脏bkeys
+ */
 		if (searched_full_index &&
 		    RB_EMPTY_ROOT(&dc->writeback_keys.keys)) {
 			atomic_set(&dc->has_dirty, 0);
@@ -734,7 +786,8 @@ static int bch_writeback_thread(void *arg)
 		up_write(&dc->writeback_lock);
 
 /** comment by hy 2020-09-16
- * # 遍历writeback_keys
+ * # 把dc->writeback_keys中的bkeys 回刷到后端设备
+     遍历writeback_keys
  */
 		read_dirty(dc);
 
@@ -992,12 +1045,18 @@ void bch_cached_dev_writeback_init(struct cached_dev *dc)
 
 int bch_cached_dev_writeback_start(struct cached_dev *dc)
 {
+/** comment by hy 2020-09-17
+ * # 设置数据回刷 队列
+ */
 	dc->writeback_write_wq = alloc_workqueue("bcache_writeback_wq",
 						WQ_MEM_RECLAIM, 0);
 	if (!dc->writeback_write_wq)
 		return -ENOMEM;
 
 	cached_dev_get(dc);
+/** comment by hy 2020-09-17
+ * # 设置数据回刷线程
+ */
 	dc->writeback_thread = kthread_create(bch_writeback_thread, dc,
 					      "bcache_writeback");
 	if (IS_ERR(dc->writeback_thread)) {

@@ -604,6 +604,9 @@ static struct btree *mca_bucket_alloc(struct cache_set *c,
 	mutex_init(&b->write_lock);
 	lockdep_set_novalidate_class(&b->write_lock);
 	INIT_LIST_HEAD(&b->list);
+/** comment by hy 2020-10-03
+ * # 延迟处理,写操作
+ */
 	INIT_DELAYED_WORK(&b->work, btree_node_write_work);
 	b->c = c;
 	sema_init(&b->io_mutex, 1);
@@ -804,6 +807,9 @@ int bch_btree_cache_alloc(struct cache_set *c)
 {
 	unsigned int i;
 
+/** comment by hy 2020-10-03
+ * # max = root->level * 8 +16
+ */
 	for (i = 0; i < mca_reserve(c); i++)
 		if (!mca_bucket_alloc(c, &ZERO_KEY, GFP_KERNEL))
 			return -ENOMEM;
@@ -948,6 +954,9 @@ static struct btree *mca_alloc(struct cache_set *c, struct btree_op *op,
 				goto out;
 		}
 
+/** comment by hy 2020-10-09
+ * # 这里分配树
+ */
 	b = mca_bucket_alloc(c, k, __GFP_NOWARN|GFP_NOIO);
 	if (!b)
 		goto err;
@@ -969,6 +978,11 @@ out:
 	b->written	= 0;
 	b->level	= level;
 
+/** comment by hy 2020-10-09
+ * # 0 表示顶层 是否为顶层,顶层使用 加载 tree,否则加载范围
+     已经创建的树就不为顶层,是这个又可以转化为加载新tree
+     设置对应的key操作行为
+ */
 	if (!b->level)
 		bch_btree_keys_init(&b->keys, &bch_extent_keys_ops,
 				    &b->c->expensive_debug_checks);
@@ -1120,6 +1134,9 @@ struct btree *__bch_btree_node_alloc(struct cache_set *c, struct btree_op *op,
 	BKEY_PADDED(key) k;
 	struct btree *b = ERR_PTR(-EAGAIN);
 
+/** comment by hy 2020-10-09
+ * # 默认一开始是level = 0
+ */
 	mutex_lock(&c->bucket_lock);
 retry:
 	if (__bch_bucket_alloc_set(c, RESERVE_BTREE, &k.key, 1, wait))
@@ -1899,8 +1916,8 @@ static void bch_btree_gc(struct cache_set *c)
      遍历cache disk的bucket
        如果为元数据或数据占用量== bucket_size则 continue
      统计哪些bucket可以通过移动来合并bucket的使用
-       标记这些bucket为SET_GC_MOVE(b, 1)
-     callread_moving = read_moving
+       标记这些bucket为 SET_GC_MOVE (b, 1)
+     call read_moving = read_moving
  */
 	bch_moving_gc(c);
 }

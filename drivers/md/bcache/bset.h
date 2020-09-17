@@ -167,7 +167,7 @@ struct bkey_float;
      再到hash表中取查找btree node（ mca_find 函数实现）。
      叶子节点中的bkey存放的就是实际的映射了
      （根据这些key可以找到缓存数据以及在hdd上的位置）
-     intbch_btree_map_keys 遍历函数
+     int bch_btree_map_keys 遍历函数
  */
 struct bset_tree {
 	/*

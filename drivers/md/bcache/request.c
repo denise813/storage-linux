@@ -63,13 +63,17 @@ static void bch_data_insert_keys(struct closure *cl)
 	int ret;
 
 /** comment by hy 2020-09-16
- * # 负责将keys写到journal中
+ * # 如果不是完全覆盖写的话，先写日志
+     负责将keys写到journal中
      按照插入时间排序，只用记录叶子节点上bkey的更新
  */
 	if (!op->replace)
 		journal_ref = bch_journal(op->c, &op->insert_keys,
 					  op->flush_journal ? cl : NULL);
 
+/** comment by hy 2020-09-17
+ * # 把bkeys插入b+tree
+ */
 	ret = bch_btree_insert(op->c, &op->insert_keys,
 			       journal_ref, replace_key);
 	if (ret == -ESRCH) {
@@ -227,22 +231,32 @@ static void bch_data_insert_start(struct closure *cl)
 		SET_KEY_OFFSET(k, bio->bi_iter.bi_sector);
 
 /** comment by hy 2020-09-16
- * # 需要在cache disk中分配新的存储区域
+ * # 申请bucket空间
+     需要在cache disk中分配新的存储区域
  */
 		if (!bch_alloc_sectors(op->c, k, bio_sectors(bio),
 				       op->write_point, op->write_prio,
 				       op->writeback))
 			goto err;
 
+/** comment by hy 2020-09-17
+ * # 获取下一片的信息
+ */
 		n = bio_next_split(bio, KEY_SIZE(k), GFP_NOIO, split);
 
 		n->bi_end_io	= bch_data_insert_endio;
 		n->bi_private	= cl;
 
 		if (op->writeback) {
+/** comment by hy 2020-09-17
+ * # 把bkey置脏
+ */
 			SET_KEY_DIRTY(k, true);
 
 			for (i = 0; i < KEY_PTRS(k); i++)
+/** comment by hy 2020-09-17
+ * # 置gc标识，回收线程依据此标识决定是否回收
+ */
 				SET_GC_MARK(PTR_BUCKET(op->c, k, i),
 					    GC_MARK_DIRTY);
 		}
@@ -252,6 +266,9 @@ static void bch_data_insert_start(struct closure *cl)
 			bio_csum(n, k);
 
 		trace_bcache_cache_insert(k);
+/** comment by hy 2020-09-17
+ * # 移动op->insert_keys.top指针，确保下一轮循环起始位置
+ */
 		bch_keylist_push(&op->insert_keys);
 
 		bio_set_op_attrs(n, REQ_OP_WRITE, 0);
@@ -262,6 +279,9 @@ static void bch_data_insert_start(struct closure *cl)
 	} while (n != bio);
 
 	op->insert_data_done = true;
+/** comment by hy 2020-09-17
+ * # bch_data_insert_keys 把数据压入cache
+ */
 	continue_at(cl, bch_data_insert_keys, op->wq);
 	return;
 err:
@@ -326,6 +346,9 @@ void bch_data_insert(struct closure *cl)
 			   op->writeback, op->bypass);
 
 	bch_keylist_init(&op->insert_keys);
+/** comment by hy 2020-09-17
+ * # 增加bio引用计数
+ */
 	bio_get(op->bio);
 /** comment by hy 2020-09-16
  * # 考虑cache disk存储区域的overlap
@@ -1103,6 +1126,9 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 		s->iop.writeback = true;
 	}
 
+/** comment by hy 2020-09-17
+ * # 如果bio为discard或者达到缓存阀值则pass
+ */
 	if (s->iop.bypass) {
 		s->iop.bio = s->orig_bio;
 		bio_get(s->iop.bio);
@@ -1157,9 +1183,12 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 
 insert_data:
 /** comment by hy 2020-09-16
- * # B+tree更新节点
+ * # 把数据压入cache B+tree更新节点
  */
 	closure_call(&s->iop.cl, bch_data_insert, NULL, cl);
+/** comment by hy 2020-09-17
+ * # 若为0时，则cached_dev_write_complete
+ */
 	continue_at(cl, cached_dev_write_complete, NULL);
 }
 
@@ -1303,6 +1332,9 @@ blk_qc_t cached_dev_make_request(struct request_queue *q, struct bio *bio)
 	bio_set_dev(bio, dc->bdev);
 	bio->bi_iter.bi_sector += dc->sb.data_offset;
 
+/** comment by hy 2020-09-17
+ * # 如果device有对应的缓存设备
+ */
 	if (cached_dev_get(dc)) {
 /** comment by hy 2020-09-16
  * # 有cache device 根据要传输的bio, 用search_alloc建立struct search s
@@ -1320,7 +1352,8 @@ blk_qc_t cached_dev_make_request(struct request_queue *q, struct bio *bio)
 					      bcache_wq);
 		} else {
 /** comment by hy 2020-09-16
- * # 是否应该bypass这个bio
+ * # 如果bio为discard或者达到缓存阀值则pass
+     是否应该bypass这个bio
  */
 			s->iop.bypass = check_should_bypass(dc, bio);
 
@@ -1335,7 +1368,7 @@ blk_qc_t cached_dev_make_request(struct request_queue *q, struct bio *bio)
 	} else
 		/* I/O request sent to backing device */
 /** comment by hy 2020-09-16
- * # 如果device没有对应的缓存设备，则直接将向主设备提交bio
+ * # 如果device没有对应的缓存设备，则直接将向设备提交bio
  */
 		detached_dev_do_request(d, bio);
 

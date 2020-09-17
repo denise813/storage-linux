@@ -120,6 +120,9 @@ static void write_moving(struct closure *cl)
 		closure_call(&op->cl, bch_data_insert, NULL, cl);
 	}
 
+/** comment by hy 2020-10-03
+ * # 
+ */
 	continue_at(cl, write_moving_finish, op->wq);
 }
 
@@ -130,6 +133,9 @@ static void read_moving_submit(struct closure *cl)
 
 	bch_submit_bbio(bio, io->op.c, &io->w->key, 0);
 
+/** comment by hy 2020-10-03
+ * # 
+ */
 	continue_at(cl, write_moving, io->op.wq);
 }
 

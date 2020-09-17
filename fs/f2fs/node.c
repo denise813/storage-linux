@@ -2498,8 +2498,14 @@ void f2fs_alloc_nid_done(struct f2fs_sb_info *sbi, nid_t nid)
 	struct free_nid *i;
 
 	spin_lock(&nm_i->nid_list_lock);
+/** comment by hy 2020-10-10
+ * # 从基数树中删除这个节点
+ */
 	i = __lookup_free_nid_list(nm_i, nid);
 	f2fs_bug_on(sbi, !i);
+/** comment by hy 2020-10-10
+ * # 从链表中删除
+ */
 	__remove_free_nid(sbi, i, PREALLOC_NID);
 	spin_unlock(&nm_i->nid_list_lock);
 

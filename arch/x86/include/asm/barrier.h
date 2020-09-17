@@ -19,6 +19,12 @@
 #define wmb() asm volatile(ALTERNATIVE("lock; addl $0,-4(%%esp)", "sfence", \
 				       X86_FEATURE_XMM2) ::: "memory", "cc")
 #else
+/** comment by hy 2020-10-16
+ * # :::"memory 内存单元已被修改、需要重新读入
+     通过原子语义进行操作
+     读标记它的使无效队列,写标记它的存储缓冲区
+     mfence： lfence： sfence：对应的串线指令
+ */
 #define mb() 	asm volatile("mfence":::"memory")
 #define rmb()	asm volatile("lfence":::"memory")
 #define wmb()	asm volatile("sfence" ::: "memory")
