@@ -1187,6 +1187,9 @@ static int ceph_init_fs_context(struct fs_context *fc)
 #endif
 
 	fc->fs_private = pctx;
+/** comment by hy 2022-02-17
+ * # ceph 文件系统的方法
+ */
 	fc->ops = &ceph_context_ops;
 	return 0;
 
